@@ -36,8 +36,8 @@ INLINE void diagnostic_init(const char *filename) {
   diag_state.warning_count = 0;
 }
 
-INLINE void diagnostic_log(DiagnosticLevel level, SourceLocation loc,
-                           const char *fmt, ...) {
+void diagnostic_log(DiagnosticLevel level, SourceLocation loc,
+                    const char *fmt, ...) {
   FILE *out = (level >= DIAG_LEVEL_ERROR) ? stderr : stdout;
   if (out == stderr) {
     fflush(stdout);
