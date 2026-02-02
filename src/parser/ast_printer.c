@@ -2,13 +2,13 @@
 #include "lexer/token.h"
 #include <stdio.h>
 
-static void print_indent(int depth) {
+static void print_indent(const int depth) {
   for (int i = 0; i < depth; i++) {
     printf("  ");
   }
 }
 
-static const char *type_name(AstTypeKind kind) {
+static const char *type_name(const AstTypeKind kind) {
   switch (kind) {
     case AST_TYPE_INT: return "int";
     case AST_TYPE_CHAR: return "char";
@@ -29,7 +29,7 @@ static void print_type(const AstType *type) {
   }
 }
 
-static const char *op_string(TokenKind op) {
+static const char *op_string(const TokenKind op) {
   const char *punct = token_punctuator_string(op);
   if (punct) {
     return punct;
@@ -39,7 +39,7 @@ static const char *op_string(TokenKind op) {
 
 static void ast_print_node(const AstNode *node, int depth);
 
-static void ast_print_block(const AstNode *node, int depth) {
+static void ast_print_block(const AstNode *node, const int depth) {
   print_indent(depth);
   printf("block {\n");
   for (size_t i = 0; i < node->data.block.statements.count; i++) {
@@ -49,7 +49,7 @@ static void ast_print_block(const AstNode *node, int depth) {
   printf("}\n");
 }
 
-static void ast_print_function_header(const AstFunction *fn, int depth) {
+static void ast_print_function_header(const AstFunction *fn, const int depth) {
   print_indent(depth);
   printf("fn %s : ", fn->name);
   print_type(&fn->return_type);
@@ -65,7 +65,7 @@ static void ast_print_function_header(const AstFunction *fn, int depth) {
   printf("\n");
 }
 
-static void ast_print_node(const AstNode *node, int depth) {
+static void ast_print_node(const AstNode *node, const int depth) {
   if (!node) {
     print_indent(depth);
     printf("<null>\n");
