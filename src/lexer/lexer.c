@@ -17,7 +17,7 @@ static void token_array_init(TokenArray *array) {
   array->capacity = INITIAL_TOKEN_CAPACITY;
 }
 
-static void token_array_push(TokenArray *array, Token token) {
+static void token_array_push(TokenArray *array, const Token token) {
   if (array->count >= array->capacity) {
     array->capacity *= 2;
     array->tokens = realloc(array->tokens, array->capacity * sizeof(Token));
@@ -52,7 +52,7 @@ static INLINE char advance(Lexer *lexer) {
   return *lexer->current++;
 }
 
-static INLINE int32_t match(Lexer *lexer, char expected) {
+static INLINE int32_t match(Lexer *lexer, const char expected) {
   if (is_eof(lexer)) return 0;
   if (*lexer->current != expected) return 0;
   lexer->current++;

@@ -10,7 +10,7 @@ struct {
   int32_t warning_count;
 } diag_state = {NULL, 0, 0};
 
-const char *level_to_string(DiagnosticLevel level) {
+const char *level_to_string(const DiagnosticLevel level) {
   switch (level) {
     case DIAG_LEVEL_INFO: return "[I]";
     case DIAG_LEVEL_WARN: return "[W]";
@@ -20,7 +20,7 @@ const char *level_to_string(DiagnosticLevel level) {
   }
 }
 
-const char *level_to_color(DiagnosticLevel level) {
+const char *level_to_color(const DiagnosticLevel level) {
   switch (level) {
     case DIAG_LEVEL_INFO: return "\033[36m";
     case DIAG_LEVEL_WARN: return "\033[33m";
@@ -36,8 +36,8 @@ INLINE void diagnostic_init(const char *filename) {
   diag_state.warning_count = 0;
 }
 
-INLINE void diagnostic_log(DiagnosticLevel level, SourceLocation loc,
-                           const char *fmt, ...) {
+void diagnostic_log(const DiagnosticLevel level, const SourceLocation loc,
+                    const char *fmt, ...) {
   FILE *out = (level >= DIAG_LEVEL_ERROR) ? stderr : stdout;
   if (out == stderr) {
     fflush(stdout);

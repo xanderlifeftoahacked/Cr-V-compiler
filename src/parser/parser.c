@@ -23,7 +23,7 @@ static void arena_track(Parser *parser, void *ptr) {
   parser->arena.items[parser->arena.count++] = ptr;
 }
 
-static void *parser_alloc(Parser *parser, size_t size) {
+static void *parser_alloc(Parser *parser, const size_t size) {
   void *ptr = calloc(1, size);
   arena_track(parser, ptr);
   return ptr;
@@ -36,7 +36,7 @@ static char *parser_copy_lexeme(Parser *parser, const Token *token) {
   return buf;
 }
 
-static AstNode *parser_new_node(Parser *parser, AstNodeKind kind, const Token *token) {
+static AstNode *parser_new_node(Parser *parser, const AstNodeKind kind, const Token *token) {
   AstNode *node = parser_alloc(parser, sizeof(AstNode));
   node->kind = kind;
   node->line = token ? token->line : 0;
@@ -70,7 +70,7 @@ static void function_vector_push(Parser *parser, AstFunctionVector *vec, AstFunc
   vec->items[vec->count++] = fn;
 }
 
-static void param_vector_push(Parser *parser, AstParamVector *vec, AstParam param) {
+static void param_vector_push(Parser *parser, AstParamVector *vec, const AstParam param) {
   if (vec->count == vec->capacity) {
     size_t new_cap = vec->capacity ? vec->capacity * 2 : 4;
     AstParam *new_items = parser_alloc(parser, new_cap * sizeof(AstParam));
@@ -108,14 +108,14 @@ static INLINE const Token *parser_advance(Parser *parser) {
   return parser_previous(parser);
 }
 
-static INLINE int32_t parser_check(const Parser *parser, TokenKind kind) {
+static INLINE int32_t parser_check(const Parser *parser, const TokenKind kind) {
   if (parser_is_at_end(parser)) {
     return 0;
   }
   return parser_peek(parser)->kind == kind;
 }
 
-static INLINE int32_t parser_match(Parser *parser, TokenKind kind) {
+static INLINE int32_t parser_match(Parser *parser, const TokenKind kind) {
   if (parser_check(parser, kind)) {
     parser_advance(parser);
     return 1;
@@ -158,7 +158,7 @@ static void parser_error_at(Parser *parser, const Token *token, const char *fmt,
   diagnostic_log(DIAG_LEVEL_ERROR, loc, "%s", message);
 }
 
-static const Token *parser_expect(Parser *parser, TokenKind kind, const char *message) {
+static const Token *parser_expect(Parser *parser, const TokenKind kind, const char *message) {
   if (parser_check(parser, kind)) {
     return parser_advance(parser);
   }
@@ -472,7 +472,7 @@ static AstNode *parse_while_statement(Parser *parser, const Token *kw) {
   return node;
 }
 
-static AstNode *make_binary(Parser *parser, TokenKind op, const Token *token, AstNode *left, AstNode *right) {
+static AstNode *make_binary(Parser *parser, const TokenKind op, const Token *token, AstNode *left, AstNode *right) {
   AstNode *node = parser_new_node(parser, AST_NODE_BINARY_EXPR, token);
   node->data.binary.left = left;
   node->data.binary.right = right;
@@ -480,7 +480,7 @@ static AstNode *make_binary(Parser *parser, TokenKind op, const Token *token, As
   return node;
 }
 
-static AstNode *make_unary(Parser *parser, TokenKind op, const Token *token, AstNode *operand) {
+static AstNode *make_unary(Parser *parser, const TokenKind op, const Token *token, AstNode *operand) {
   AstNode *node = parser_new_node(parser, AST_NODE_UNARY_EXPR, token);
   node->data.unary.op = op;
   node->data.unary.operand = operand;
@@ -515,7 +515,7 @@ static AstNode *parse_assignment(Parser *parser) {
 }
 
 static AstNode *parse_left_associative(Parser *parser, AstNode *(*next)(Parser *), const TokenKind *ops,
-                                       size_t op_count) {
+                                       const size_t op_count) {
   AstNode *expr = next(parser);
   while (1) {
     int matched = 0;

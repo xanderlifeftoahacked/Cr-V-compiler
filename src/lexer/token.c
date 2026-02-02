@@ -34,8 +34,8 @@ static const KeywordEntry keyword_table[] = {
   {NULL, TOKEN_UNKNOWN}
 };
 
-INLINE Token token_create(TokenKind kind, const char *start, size_t length,
-                          int32_t line, int32_t column) {
+INLINE Token token_create(const TokenKind kind, const char *start, const size_t length,
+                          const int32_t line, const int32_t column) {
   Token token = {
     .kind = kind,
     .start = start,
@@ -47,7 +47,7 @@ INLINE Token token_create(TokenKind kind, const char *start, size_t length,
   return token;
 }
 
-INLINE const char *token_kind_name(TokenKind kind) {
+INLINE const char *token_kind_name(const TokenKind kind) {
   if (kind >= 0 && kind < TOKEN_COUNT) {
     return token_names[kind];
   }
@@ -67,7 +67,7 @@ void token_print(const Token *token) {
   printf(", line=%d, col=%d}", token->line, token->column);
 }
 
-INLINE TokenKind token_check_keyword(const char *str, size_t length) {
+INLINE TokenKind token_check_keyword(const char *str, const size_t length) {
   for (size_t i = 0; keyword_table[i].word != NULL; i++) {
     size_t kw_len = strlen(keyword_table[i].word);
     if (length == kw_len &&
@@ -78,7 +78,7 @@ INLINE TokenKind token_check_keyword(const char *str, size_t length) {
   return TOKEN_IDENTIFIER;
 }
 
-INLINE const char *token_punctuator_string(TokenKind kind) {
+INLINE const char *token_punctuator_string(const TokenKind kind) {
   for (size_t i = 0; punctuator_table[i].str != NULL; i++) {
     if (punctuator_table[i].kind == kind) {
       return punctuator_table[i].str;
