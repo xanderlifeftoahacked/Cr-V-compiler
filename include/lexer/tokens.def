@@ -1,0 +1,62 @@
+#ifndef TOK
+#define TOK(t)
+#endif
+
+#ifndef PUNCT
+#define PUNCT(t, s) TOK(t)
+#endif
+
+#ifndef KEYWORD
+#define KEYWORD(t) TOK(KW_##t)
+#endif
+
+TOK(UNKNOWN)
+TOK(EOF)
+TOK(IDENTIFIER)
+TOK(NUMBER)
+TOK(CHAR_LITERAL)
+TOK(STRING_LITERAL)
+
+PUNCT(LSHIFT,         "<<")
+PUNCT(RSHIFT,         ">>")
+PUNCT(LESS_EQUAL,     "<=")
+PUNCT(GREATER_EQUAL,  ">=")
+PUNCT(EQUAL,          "==")
+PUNCT(NOT_EQUAL,      "!=")
+PUNCT(LOGICAL_AND,    "&&")
+PUNCT(LOGICAL_OR,     "||")
+
+PUNCT(LPAREN,         "(")
+PUNCT(RPAREN,         ")")
+PUNCT(LBRACE,         "{")
+PUNCT(RBRACE,         "}")
+PUNCT(LBRACKET,       "[")
+PUNCT(RBRACKET,       "]")
+PUNCT(SEMICOLON,      ";")
+PUNCT(COMMA,          ",")
+PUNCT(PLUS,           "+")
+PUNCT(MINUS,          "-")
+PUNCT(STAR,           "*")
+PUNCT(DIV,            "/")
+PUNCT(MOD,            "%")
+PUNCT(LESS,           "<")
+PUNCT(GREATER,        ">")
+PUNCT(ASSIGN,         "=")
+PUNCT(AMPERSAND,      "&")
+PUNCT(PIPE,           "|")
+PUNCT(CARET,          "^")
+PUNCT(TILDE,          "~")
+PUNCT(EXCLAIM,        "!")
+
+KEYWORD(int)
+KEYWORD(char)
+KEYWORD(if)
+KEYWORD(else)
+KEYWORD(while)
+KEYWORD(break)
+KEYWORD(return)
+KEYWORD(goto)
+
+#undef TOK
+#undef PUNCT
+#undef KEYWORD
