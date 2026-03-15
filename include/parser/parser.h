@@ -18,6 +18,7 @@ typedef struct Parser {
   const char *filename;
   const char *source_begin;
   int32_t had_error;
+  int32_t switch_depth;
   ParserArena arena;
   AstModule *module;
 } Parser;

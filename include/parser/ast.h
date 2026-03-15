@@ -25,7 +25,14 @@ typedef enum {
   AST_NODE_VAR_DECL,
   AST_NODE_IF_STMT,
   AST_NODE_WHILE_STMT,
+  AST_NODE_FOR_STMT,
+  AST_NODE_DO_WHILE_STMT,
+  AST_NODE_SWITCH_STMT,
+  AST_NODE_CASE_STMT,
+  AST_NODE_DEFAULT_STMT,
   AST_NODE_BREAK_STMT,
+  AST_NODE_GOTO_STMT,
+  AST_NODE_LABEL_STMT,
   AST_NODE_BINARY_EXPR,
   AST_NODE_UNARY_EXPR,
   AST_NODE_INT_LITERAL,
@@ -110,8 +117,45 @@ struct AstNode {
     } while_stmt;
 
     struct {
+      AstNode *init;
+      AstNode *condition;
+      AstNode *post;
+      AstNode *body;
+    } for_stmt;
+
+    struct {
+      AstNode *body;
+      AstNode *condition;
+    } do_while_stmt;
+
+    struct {
+      AstNode *expr;
+      AstNode *body;
+    } switch_stmt;
+
+    struct {
+      AstNode *value;
+      AstNode *statement;
+    } case_stmt;
+
+    struct {
+      AstNode *statement;
+    } default_stmt;
+
+    struct {
       int32_t unused;
     } break_stmt;
+
+    struct {
+      char *label;
+      size_t length;
+    } goto_stmt;
+
+    struct {
+      char *label;
+      size_t length;
+      AstNode *statement;
+    } label_stmt;
 
     struct {
       AstNode *left;

@@ -116,9 +116,49 @@ static void ast_print_node(const AstNode *node, const int depth) {
       ast_print_node(node->data.while_stmt.condition, depth + 1);
       ast_print_node(node->data.while_stmt.body, depth + 1);
       break;
+    case AST_NODE_FOR_STMT:
+      print_indent(depth);
+      printf("for\n");
+      ast_print_node(node->data.for_stmt.init, depth + 1);
+      ast_print_node(node->data.for_stmt.condition, depth + 1);
+      ast_print_node(node->data.for_stmt.post, depth + 1);
+      ast_print_node(node->data.for_stmt.body, depth + 1);
+      break;
+    case AST_NODE_DO_WHILE_STMT:
+      print_indent(depth);
+      printf("do_while\n");
+      ast_print_node(node->data.do_while_stmt.body, depth + 1);
+      ast_print_node(node->data.do_while_stmt.condition, depth + 1);
+      break;
+    case AST_NODE_SWITCH_STMT:
+      print_indent(depth);
+      printf("switch\n");
+      ast_print_node(node->data.switch_stmt.expr, depth + 1);
+      ast_print_node(node->data.switch_stmt.body, depth + 1);
+      break;
+    case AST_NODE_CASE_STMT:
+      print_indent(depth);
+      printf("case\n");
+      ast_print_node(node->data.case_stmt.value, depth + 1);
+      ast_print_node(node->data.case_stmt.statement, depth + 1);
+      break;
+    case AST_NODE_DEFAULT_STMT:
+      print_indent(depth);
+      printf("default\n");
+      ast_print_node(node->data.default_stmt.statement, depth + 1);
+      break;
     case AST_NODE_BREAK_STMT:
       print_indent(depth);
       printf("break\n");
+      break;
+    case AST_NODE_GOTO_STMT:
+      print_indent(depth);
+      printf("goto %s\n", node->data.goto_stmt.label);
+      break;
+    case AST_NODE_LABEL_STMT:
+      print_indent(depth);
+      printf("label %s\n", node->data.label_stmt.label);
+      ast_print_node(node->data.label_stmt.statement, depth + 1);
       break;
     case AST_NODE_BINARY_EXPR:
       print_indent(depth);

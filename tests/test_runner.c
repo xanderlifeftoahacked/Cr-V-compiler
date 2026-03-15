@@ -109,6 +109,20 @@ int main(void) {
     {"parser/valid/arrays_and_while.c", 1, TEST_PARSE},
     {"parser/valid/calls_and_subscripts.c", 1, TEST_PARSE},
     {"parser/valid/func_params.c", 1, TEST_PARSE},
+    {"parser/valid/nested_initializer.c", 1, TEST_PARSE},
+    {"parser/valid/logical_ops.c", 1, TEST_PARSE},
+    {"parser/valid/control_flow.c", 1, TEST_PARSE},
+    {"parser/valid/goto_with_label.c", 1, TEST_PARSE},
+
+    {"parser/invalid/empty_translation_unit.c", 0, TEST_PARSE},
+    {"parser/invalid/trailing_comma_initializer.c", 0, TEST_PARSE},
+    {"parser/invalid/struct_not_supported.c", 0, TEST_PARSE},
+    {"parser/invalid/case_outside_switch.c", 0, TEST_PARSE},
+    {"parser/invalid/duplicate_case.c", 0, TEST_PARSE},
+    {"parser/invalid/duplicate_default.c", 0, TEST_PARSE},
+    {"parser/invalid/goto_unknown_label.c", 0, TEST_PARSE},
+    {"parser/invalid/duplicate_label.c", 0, TEST_PARSE},
+    {"parser/invalid/for_missing_semicolon.c", 0, TEST_PARSE},
   };
 
   int passed = 0;
