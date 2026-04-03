@@ -23,7 +23,7 @@ static void arena_track(Parser *parser, void *ptr) {
   parser->arena.items[parser->arena.count++] = ptr;
 }
 
-static void *parser_alloc(Parser *parser, const size_t size) {
+static void *parser_alloc(Parser *parser, size_t size) {
   void *ptr = calloc(1, size);
   arena_track(parser, ptr);
   return ptr;
@@ -36,7 +36,7 @@ static char *parser_copy_lexeme(Parser *parser, const Token *token) {
   return buf;
 }
 
-static AstNode *parser_new_node(Parser *parser, const AstNodeKind kind, const Token *token) {
+static AstNode *parser_new_node(Parser *parser, AstNodeKind kind, const Token *token) {
   AstNode *node = parser_alloc(parser, sizeof(AstNode));
   node->kind = kind;
   node->line = token ? token->line : 0;
@@ -70,7 +70,7 @@ static void function_vector_push(Parser *parser, AstFunctionVector *vec, AstFunc
   vec->items[vec->count++] = fn;
 }
 
-static void param_vector_push(Parser *parser, AstParamVector *vec, const AstParam param) {
+static void param_vector_push(Parser *parser, AstParamVector *vec, AstParam param) {
   if (vec->count == vec->capacity) {
     size_t new_cap = vec->capacity ? vec->capacity * 2 : 4;
     AstParam *new_items = parser_alloc(parser, new_cap * sizeof(AstParam));
@@ -88,6 +88,14 @@ static INLINE const Token *parser_peek(const Parser *parser) {
     return &parser->tokens->tokens[parser->tokens->count - 1];
   }
   return &parser->tokens->tokens[parser->current];
+}
+
+static INLINE const Token *parser_peek_next(const Parser *parser) {
+  size_t index = parser->current + 1;
+  if (index >= parser->tokens->count) {
+    return &parser->tokens->tokens[parser->tokens->count - 1];
+  }
+  return &parser->tokens->tokens[index];
 }
 
 static INLINE const Token *parser_previous(const Parser *parser) {
@@ -108,14 +116,14 @@ static INLINE const Token *parser_advance(Parser *parser) {
   return parser_previous(parser);
 }
 
-static INLINE int32_t parser_check(const Parser *parser, const TokenKind kind) {
+static INLINE int32_t parser_check(const Parser *parser, TokenKind kind) {
   if (parser_is_at_end(parser)) {
     return 0;
   }
   return parser_peek(parser)->kind == kind;
 }
 
-static INLINE int32_t parser_match(Parser *parser, const TokenKind kind) {
+static INLINE int32_t parser_match(Parser *parser, TokenKind kind) {
   if (parser_check(parser, kind)) {
     parser_advance(parser);
     return 1;
@@ -158,7 +166,23 @@ static void parser_error_at(Parser *parser, const Token *token, const char *fmt,
   diagnostic_log(DIAG_LEVEL_ERROR, loc, "%s", message);
 }
 
-static const Token *parser_expect(Parser *parser, const TokenKind kind, const char *message) {
+static void parser_error_node(Parser *parser, const AstNode *node, const char *fmt, ...) {
+  parser->had_error = 1;
+  char message[256];
+  va_list args;
+  va_start(args, fmt);
+  vsnprintf(message, sizeof(message), fmt, args);
+  va_end(args);
+  SourceLocation loc = {
+    .filename = parser->filename,
+    .line = node ? node->line : 0,
+    .column = node ? node->column : 0,
+    .source_line = NULL
+  };
+  diagnostic_log(DIAG_LEVEL_ERROR, loc, "%s", message);
+}
+
+static const Token *parser_expect(Parser *parser, TokenKind kind, const char *message) {
   if (parser_check(parser, kind)) {
     return parser_advance(parser);
   }
@@ -177,7 +201,13 @@ static void parser_sync(Parser *parser) {
       case TOKEN_KW_return:
       case TOKEN_KW_if:
       case TOKEN_KW_while:
+      case TOKEN_KW_for:
+      case TOKEN_KW_do:
+      case TOKEN_KW_switch:
+      case TOKEN_KW_case:
+      case TOKEN_KW_default:
       case TOKEN_KW_break:
+      case TOKEN_KW_goto:
         return;
       default:
         parser_advance(parser);
@@ -211,6 +241,13 @@ static AstNode *parse_expression(Parser *parser);
 
 static AstNode *parse_assignment(Parser *parser);
 
+static AstNode *parse_left_associative(Parser *parser, AstNode *(*next)(Parser *), const TokenKind *ops,
+                                       size_t op_count);
+
+static AstNode *parse_logical_or(Parser *parser);
+
+static AstNode *parse_logical_and(Parser *parser);
+
 static AstNode *parse_bitwise_or(Parser *parser);
 
 static AstNode *parse_bitwise_and(Parser *parser);
@@ -235,12 +272,23 @@ static AstNode *parse_if_statement(Parser *parser, const Token *kw);
 
 static AstNode *parse_while_statement(Parser *parser, const Token *kw);
 
+static AstNode *parse_for_statement(Parser *parser, const Token *kw);
+
+static AstNode *parse_do_while_statement(Parser *parser, const Token *kw);
+
+static AstNode *parse_switch_statement(Parser *parser, const Token *kw);
+
+static void validate_switch_statement(Parser *parser, const AstNode *switch_node);
+
+static void validate_function_control_flow(Parser *parser, const AstNode *body);
+
 void parser_init(Parser *parser, const TokenArray *tokens, const char *source, const char *filename) {
   parser->tokens = tokens;
   parser->current = 0;
   parser->filename = filename;
   parser->source_begin = source;
   parser->had_error = 0;
+  parser->switch_depth = 0;
   parser->arena.items = NULL;
   parser->arena.count = 0;
   parser->arena.capacity = 0;
@@ -307,6 +355,7 @@ static AstFunction *parse_function(Parser *parser) {
   if (!body) {
     return NULL;
   }
+  validate_function_control_flow(parser, body);
   AstFunction *fn = parser_alloc(parser, sizeof(AstFunction));
   fn->name = parser_copy_lexeme(parser, name_tok);
   fn->length = name_tok->length;
@@ -363,6 +412,19 @@ static AstNode *parse_statement(Parser *parser) {
   if (parser_check(parser, TOKEN_LBRACE)) {
     return parse_block(parser);
   }
+  if (parser_check(parser, TOKEN_IDENTIFIER) && parser_peek_next(parser)->kind == TOKEN_COLON) {
+    const Token *label = parser_advance(parser);
+    parser_advance(parser);
+    AstNode *statement = parse_statement(parser);
+    if (!statement) {
+      return NULL;
+    }
+    AstNode *node = parser_new_node(parser, AST_NODE_LABEL_STMT, label);
+    node->data.label_stmt.label = parser_copy_lexeme(parser, label);
+    node->data.label_stmt.length = label->length;
+    node->data.label_stmt.statement = statement;
+    return node;
+  }
   if (parser_match(parser, TOKEN_KW_if)) {
     return parse_if_statement(parser, parser_previous(parser));
   }
@@ -372,6 +434,51 @@ static AstNode *parse_statement(Parser *parser) {
   }
   if (parser_match(parser, TOKEN_KW_while)) {
     return parse_while_statement(parser, parser_previous(parser));
+  }
+  if (parser_match(parser, TOKEN_KW_for)) {
+    return parse_for_statement(parser, parser_previous(parser));
+  }
+  if (parser_match(parser, TOKEN_KW_do)) {
+    return parse_do_while_statement(parser, parser_previous(parser));
+  }
+  if (parser_match(parser, TOKEN_KW_switch)) {
+    return parse_switch_statement(parser, parser_previous(parser));
+  }
+  if (parser_match(parser, TOKEN_KW_case)) {
+    const Token *kw = parser_previous(parser);
+    if (parser->switch_depth <= 0) {
+      parser_error_at(parser, kw, "unexpected 'case'");
+      return NULL;
+    }
+    AstNode *value = parse_expression(parser);
+    if (!parser_expect(parser, TOKEN_COLON, "expected ':' after case value")) {
+      return NULL;
+    }
+    AstNode *statement = parse_statement(parser);
+    if (!statement) {
+      return NULL;
+    }
+    AstNode *node = parser_new_node(parser, AST_NODE_CASE_STMT, kw);
+    node->data.case_stmt.value = value;
+    node->data.case_stmt.statement = statement;
+    return node;
+  }
+  if (parser_match(parser, TOKEN_KW_default)) {
+    const Token *kw = parser_previous(parser);
+    if (parser->switch_depth <= 0) {
+      parser_error_at(parser, kw, "unexpected 'default'");
+      return NULL;
+    }
+    if (!parser_expect(parser, TOKEN_COLON, "expected ':' after default")) {
+      return NULL;
+    }
+    AstNode *statement = parse_statement(parser);
+    if (!statement) {
+      return NULL;
+    }
+    AstNode *node = parser_new_node(parser, AST_NODE_DEFAULT_STMT, kw);
+    node->data.default_stmt.statement = statement;
+    return node;
   }
   if (parser_match(parser, TOKEN_KW_break)) {
     const Token *kw = parser_previous(parser);
@@ -390,6 +497,20 @@ static AstNode *parse_statement(Parser *parser) {
     }
     AstNode *node = parser_new_node(parser, AST_NODE_RETURN_STMT, kw);
     node->data.return_stmt.expr = expr;
+    return node;
+  }
+  if (parser_match(parser, TOKEN_KW_goto)) {
+    const Token *kw = parser_previous(parser);
+    const Token *label = parser_expect(parser, TOKEN_IDENTIFIER, "expected label after goto");
+    if (!label) {
+      return NULL;
+    }
+    if (!parser_expect(parser, TOKEN_SEMICOLON, "expected ';'")) {
+      return NULL;
+    }
+    AstNode *node = parser_new_node(parser, AST_NODE_GOTO_STMT, kw);
+    node->data.goto_stmt.label = parser_copy_lexeme(parser, label);
+    node->data.goto_stmt.length = label->length;
     return node;
   }
   if (parser_check(parser, TOKEN_KW_int) || parser_check(parser, TOKEN_KW_char)) {
@@ -472,7 +593,309 @@ static AstNode *parse_while_statement(Parser *parser, const Token *kw) {
   return node;
 }
 
-static AstNode *make_binary(Parser *parser, const TokenKind op, const Token *token, AstNode *left, AstNode *right) {
+static AstNode *parse_for_statement(Parser *parser, const Token *kw) {
+  if (!parser_expect(parser, TOKEN_LPAREN, "expected '('")) {
+    return NULL;
+  }
+
+  AstNode *init = NULL;
+  if (parser_check(parser, TOKEN_KW_int) || parser_check(parser, TOKEN_KW_char)) {
+    const Token *type_token = parser_peek(parser);
+    AstType type;
+    parser_parse_type(parser, &type);
+    init = parse_variable_declaration(parser, type_token, type);
+    if (!init) {
+      return NULL;
+    }
+  } else if (!parser_match(parser, TOKEN_SEMICOLON)) {
+    AstNode *init_expr = parse_expression(parser);
+    if (!parser_expect(parser, TOKEN_SEMICOLON, "expected ';' after for init")) {
+      return NULL;
+    }
+    AstNode *init_stmt = parser_new_node(parser, AST_NODE_EXPR_STMT, kw);
+    init_stmt->data.expr_stmt.expr = init_expr;
+    init = init_stmt;
+  }
+
+  AstNode *condition = NULL;
+  if (!parser_check(parser, TOKEN_SEMICOLON)) {
+    condition = parse_expression(parser);
+  }
+  if (!parser_expect(parser, TOKEN_SEMICOLON, "expected ';' after for condition")) {
+    return NULL;
+  }
+
+  AstNode *post = NULL;
+  if (!parser_check(parser, TOKEN_RPAREN)) {
+    post = parse_expression(parser);
+  }
+  if (!parser_expect(parser, TOKEN_RPAREN, "expected ')'")) {
+    return NULL;
+  }
+
+  AstNode *body = parse_statement(parser);
+  if (!body) {
+    return NULL;
+  }
+
+  AstNode *node = parser_new_node(parser, AST_NODE_FOR_STMT, kw);
+  node->data.for_stmt.init = init;
+  node->data.for_stmt.condition = condition;
+  node->data.for_stmt.post = post;
+  node->data.for_stmt.body = body;
+  return node;
+}
+
+static AstNode *parse_do_while_statement(Parser *parser, const Token *kw) {
+  AstNode *body = parse_statement(parser);
+  if (!body) {
+    return NULL;
+  }
+  if (!parser_expect(parser, TOKEN_KW_while, "expected 'while' after do body")) {
+    return NULL;
+  }
+  if (!parser_expect(parser, TOKEN_LPAREN, "expected '('")) {
+    return NULL;
+  }
+  AstNode *condition = parse_expression(parser);
+  if (!parser_expect(parser, TOKEN_RPAREN, "expected ')'")) {
+    return NULL;
+  }
+  if (!parser_expect(parser, TOKEN_SEMICOLON, "expected ';'")) {
+    return NULL;
+  }
+  AstNode *node = parser_new_node(parser, AST_NODE_DO_WHILE_STMT, kw);
+  node->data.do_while_stmt.body = body;
+  node->data.do_while_stmt.condition = condition;
+  return node;
+}
+
+static AstNode *parse_switch_statement(Parser *parser, const Token *kw) {
+  if (!parser_expect(parser, TOKEN_LPAREN, "expected '('")) {
+    return NULL;
+  }
+  AstNode *expr = parse_expression(parser);
+  if (!parser_expect(parser, TOKEN_RPAREN, "expected ')'")) {
+    return NULL;
+  }
+
+  parser->switch_depth++;
+  AstNode *body = parse_statement(parser);
+  parser->switch_depth--;
+
+  if (!body) {
+    return NULL;
+  }
+  AstNode *node = parser_new_node(parser, AST_NODE_SWITCH_STMT, kw);
+  node->data.switch_stmt.expr = expr;
+  node->data.switch_stmt.body = body;
+  return node;
+}
+
+typedef struct {
+  int32_t *items;
+  size_t count;
+  size_t capacity;
+} IntValueVector;
+
+typedef struct {
+  const char *name;
+  size_t length;
+  const AstNode *node;
+} NameRef;
+
+typedef struct {
+  NameRef *items;
+  size_t count;
+  size_t capacity;
+} NameRefVector;
+
+static void int_value_vector_push(Parser *parser, IntValueVector *vec, int32_t value) {
+  if (vec->count == vec->capacity) {
+    size_t new_cap = vec->capacity ? vec->capacity * 2 : 8;
+    int32_t *new_items = parser_alloc(parser, new_cap * sizeof(int32_t));
+    if (vec->items) {
+      memcpy(new_items, vec->items, vec->count * sizeof(int32_t));
+    }
+    vec->items = new_items;
+    vec->capacity = new_cap;
+  }
+  vec->items[vec->count++] = value;
+}
+
+static void name_ref_vector_push(Parser *parser, NameRefVector *vec, const char *name, size_t length,
+                                 const AstNode *node) {
+  if (vec->count == vec->capacity) {
+    size_t new_cap = vec->capacity ? vec->capacity * 2 : 8;
+    NameRef *new_items = parser_alloc(parser, new_cap * sizeof(NameRef));
+    if (vec->items) {
+      memcpy(new_items, vec->items, vec->count * sizeof(NameRef));
+    }
+    vec->items = new_items;
+    vec->capacity = new_cap;
+  }
+  vec->items[vec->count++] = (NameRef) {
+    .name = name,
+    .length = length,
+    .node = node
+  };
+}
+
+static int32_t int_value_vector_contains(const IntValueVector *vec, int32_t value) {
+  for (size_t i = 0; i < vec->count; i++) {
+    if (vec->items[i] == value) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static int32_t name_ref_vector_contains(const NameRefVector *vec, const char *name, size_t length) {
+  for (size_t i = 0; i < vec->count; i++) {
+    if (vec->items[i].length == length && strncmp(vec->items[i].name, name, length) == 0) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static void validate_switch_body(Parser *parser, const AstNode *node, int32_t nested_switch, IntValueVector *cases,
+                                 int32_t *has_default) {
+  if (!node) {
+    return;
+  }
+
+  if (node->kind == AST_NODE_SWITCH_STMT && nested_switch > 0) {
+    return;
+  }
+
+  switch (node->kind) {
+    case AST_NODE_BLOCK:
+      for (size_t i = 0; i < node->data.block.statements.count; i++) {
+        validate_switch_body(parser, node->data.block.statements.items[i], nested_switch, cases, has_default);
+      }
+      return;
+    case AST_NODE_IF_STMT:
+      validate_switch_body(parser, node->data.if_stmt.then_branch, nested_switch, cases, has_default);
+      validate_switch_body(parser, node->data.if_stmt.else_branch, nested_switch, cases, has_default);
+      return;
+    case AST_NODE_WHILE_STMT:
+      validate_switch_body(parser, node->data.while_stmt.body, nested_switch, cases, has_default);
+      return;
+    case AST_NODE_FOR_STMT:
+      validate_switch_body(parser, node->data.for_stmt.body, nested_switch, cases, has_default);
+      return;
+    case AST_NODE_DO_WHILE_STMT:
+      validate_switch_body(parser, node->data.do_while_stmt.body, nested_switch, cases, has_default);
+      return;
+    case AST_NODE_SWITCH_STMT:
+      validate_switch_body(parser, node->data.switch_stmt.body, nested_switch + 1, cases, has_default);
+      return;
+    case AST_NODE_CASE_STMT: {
+      const AstNode *value = node->data.case_stmt.value;
+      if (!value || value->kind != AST_NODE_INT_LITERAL) {
+        parser_error_node(parser, node, "case value must be integer literal");
+      } else {
+        int32_t case_value = value->data.int_literal.value;
+        if (int_value_vector_contains(cases, case_value)) {
+          parser_error_node(parser, node, "duplicate case value '%d'", case_value);
+        } else {
+          int_value_vector_push(parser, cases, case_value);
+        }
+      }
+      validate_switch_body(parser, node->data.case_stmt.statement, nested_switch, cases, has_default);
+      return;
+    }
+    case AST_NODE_DEFAULT_STMT:
+      if (*has_default) {
+        parser_error_node(parser, node, "duplicate default label");
+      } else {
+        *has_default = 1;
+      }
+      validate_switch_body(parser, node->data.default_stmt.statement, nested_switch, cases, has_default);
+      return;
+    case AST_NODE_LABEL_STMT:
+      validate_switch_body(parser, node->data.label_stmt.statement, nested_switch, cases, has_default);
+      return;
+    default:
+      return;
+  }
+}
+
+static void validate_switch_statement(Parser *parser, const AstNode *switch_node) {
+  IntValueVector cases = {0};
+  int32_t has_default = 0;
+  validate_switch_body(parser, switch_node->data.switch_stmt.body, 0, &cases, &has_default);
+}
+
+static void collect_labels_and_gotos(Parser *parser, const AstNode *node, NameRefVector *labels, NameRefVector *gotos) {
+  if (!node) {
+    return;
+  }
+  switch (node->kind) {
+    case AST_NODE_BLOCK:
+      for (size_t i = 0; i < node->data.block.statements.count; i++) {
+        collect_labels_and_gotos(parser, node->data.block.statements.items[i], labels, gotos);
+      }
+      return;
+    case AST_NODE_IF_STMT:
+      collect_labels_and_gotos(parser, node->data.if_stmt.then_branch, labels, gotos);
+      collect_labels_and_gotos(parser, node->data.if_stmt.else_branch, labels, gotos);
+      return;
+    case AST_NODE_WHILE_STMT:
+      collect_labels_and_gotos(parser, node->data.while_stmt.body, labels, gotos);
+      return;
+    case AST_NODE_FOR_STMT:
+      collect_labels_and_gotos(parser, node->data.for_stmt.body, labels, gotos);
+      return;
+    case AST_NODE_DO_WHILE_STMT:
+      collect_labels_and_gotos(parser, node->data.do_while_stmt.body, labels, gotos);
+      return;
+    case AST_NODE_SWITCH_STMT:
+      validate_switch_statement(parser, node);
+      collect_labels_and_gotos(parser, node->data.switch_stmt.body, labels, gotos);
+      return;
+    case AST_NODE_CASE_STMT:
+      collect_labels_and_gotos(parser, node->data.case_stmt.statement, labels, gotos);
+      return;
+    case AST_NODE_DEFAULT_STMT:
+      collect_labels_and_gotos(parser, node->data.default_stmt.statement, labels, gotos);
+      return;
+    case AST_NODE_LABEL_STMT:
+      name_ref_vector_push(parser, labels, node->data.label_stmt.label, node->data.label_stmt.length, node);
+      collect_labels_and_gotos(parser, node->data.label_stmt.statement, labels, gotos);
+      return;
+    case AST_NODE_GOTO_STMT:
+      name_ref_vector_push(parser, gotos, node->data.goto_stmt.label, node->data.goto_stmt.length, node);
+      return;
+    default:
+      return;
+  }
+}
+
+static void validate_function_control_flow(Parser *parser, const AstNode *body) {
+  NameRefVector labels = {0};
+  NameRefVector gotos = {0};
+
+  collect_labels_and_gotos(parser, body, &labels, &gotos);
+
+  for (size_t i = 0; i < labels.count; i++) {
+    for (size_t j = i + 1; j < labels.count; j++) {
+      if (labels.items[i].length == labels.items[j].length &&
+          strncmp(labels.items[i].name, labels.items[j].name, labels.items[i].length) == 0) {
+        parser_error_node(parser, labels.items[j].node, "duplicate label '%s'", labels.items[j].name);
+      }
+    }
+  }
+
+  for (size_t i = 0; i < gotos.count; i++) {
+    if (!name_ref_vector_contains(&labels, gotos.items[i].name, gotos.items[i].length)) {
+      parser_error_node(parser, gotos.items[i].node, "unknown label '%s'", gotos.items[i].name);
+    }
+  }
+}
+
+static AstNode *make_binary(Parser *parser, TokenKind op, const Token *token, AstNode *left, AstNode *right) {
   AstNode *node = parser_new_node(parser, AST_NODE_BINARY_EXPR, token);
   node->data.binary.left = left;
   node->data.binary.right = right;
@@ -480,7 +903,7 @@ static AstNode *make_binary(Parser *parser, const TokenKind op, const Token *tok
   return node;
 }
 
-static AstNode *make_unary(Parser *parser, const TokenKind op, const Token *token, AstNode *operand) {
+static AstNode *make_unary(Parser *parser, TokenKind op, const Token *token, AstNode *operand) {
   AstNode *node = parser_new_node(parser, AST_NODE_UNARY_EXPR, token);
   node->data.unary.op = op;
   node->data.unary.operand = operand;
@@ -505,7 +928,7 @@ static AstNode *parse_expression(Parser *parser) {
 }
 
 static AstNode *parse_assignment(Parser *parser) {
-  AstNode *left = parse_bitwise_or(parser);
+  AstNode *left = parse_logical_or(parser);
   if (parser_match(parser, TOKEN_ASSIGN)) {
     const Token *op = parser_previous(parser);
     AstNode *right = parse_assignment(parser);
@@ -514,8 +937,18 @@ static AstNode *parse_assignment(Parser *parser) {
   return left;
 }
 
+static AstNode *parse_logical_or(Parser *parser) {
+  const TokenKind ops[] = {TOKEN_LOGICAL_OR};
+  return parse_left_associative(parser, parse_logical_and, ops, 1);
+}
+
+static AstNode *parse_logical_and(Parser *parser) {
+  const TokenKind ops[] = {TOKEN_LOGICAL_AND};
+  return parse_left_associative(parser, parse_bitwise_or, ops, 1);
+}
+
 static AstNode *parse_left_associative(Parser *parser, AstNode *(*next)(Parser *), const TokenKind *ops,
-                                       const size_t op_count) {
+                                       size_t op_count) {
   AstNode *expr = next(parser);
   while (1) {
     int matched = 0;
@@ -660,14 +1093,15 @@ static AstNode *parse_initializer(Parser *parser) {
     node->data.init_list.elements.capacity = 0;
     if (!parser_check(parser, TOKEN_RBRACE)) {
       while (1) {
-        AstNode *elem = parse_expression(parser);
+        AstNode *elem = parse_initializer(parser);
         if (!elem) {
           return NULL;
         }
         node_vector_push(parser, &node->data.init_list.elements, elem);
         if (parser_match(parser, TOKEN_COMMA)) {
           if (parser_check(parser, TOKEN_RBRACE)) {
-            break;
+            parser_error_at(parser, parser_peek(parser), "expected initializer after ','");
+            return NULL;
           }
           continue;
         }
@@ -688,15 +1122,22 @@ ParseResult parser_parse(Parser *parser) {
   module->functions.count = 0;
   module->functions.capacity = 0;
   while (!parser_is_at_end(parser)) {
+    size_t start = parser->current;
     AstFunction *fn = parse_function(parser);
     if (!fn) {
       parser_sync(parser);
+      if (parser->current == start && !parser_is_at_end(parser)) {
+        parser_advance(parser);
+      }
       if (parser_is_at_end(parser)) {
         break;
       }
       continue;
     }
     function_vector_push(parser, &module->functions, fn);
+  }
+  if (module->functions.count == 0) {
+    parser_error_at(parser, parser_peek(parser), "expected function definition");
   }
   ParseResult result = {
     .module = module,
