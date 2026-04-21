@@ -1,0 +1,8 @@
+int add(int x, int x) {
+    return x;
+}
+
+int main() {
+    return add(1, 2);
+}
+

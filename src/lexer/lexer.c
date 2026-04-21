@@ -360,9 +360,6 @@ int32_t lexer_tokenize(Lexer *lexer) {
   Token eof = token_create(TOKEN_EOF, lexer->current, 0,
                            lexer->line, get_column(lexer, lexer->current));
   token_array_push(&lexer->tokens, eof);
-#if defined(DEBUG)
-  lexer_print_tokens(lexer);
-#endif
   return 0;
 }
 

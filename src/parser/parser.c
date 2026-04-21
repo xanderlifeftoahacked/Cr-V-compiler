@@ -1,11 +1,11 @@
 #include "parser/parser.h"
-#include "utils/diagnostic.h"
-#include "utils/attributes.h"
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "utils/attributes.h"
+#include "utils/diagnostic.h"
 
 static void arena_track(Parser *parser, void *ptr) {
   if (!ptr) {
@@ -105,9 +105,7 @@ static INLINE const Token *parser_previous(const Parser *parser) {
   return &parser->tokens->tokens[parser->current - 1];
 }
 
-static INLINE int32_t parser_is_at_end(const Parser *parser) {
-  return parser_peek(parser)->kind == TOKEN_EOF;
-}
+static INLINE int32_t parser_is_at_end(const Parser *parser) { return parser_peek(parser)->kind == TOKEN_EOF; }
 
 static INLINE const Token *parser_advance(Parser *parser) {
   if (!parser_is_at_end(parser)) {
@@ -157,28 +155,10 @@ static void parser_error_at(Parser *parser, const Token *token, const char *fmt,
   va_start(args, fmt);
   vsnprintf(message, sizeof(message), fmt, args);
   va_end(args);
-  SourceLocation loc = {
-    .filename = parser->filename,
-    .line = token ? token->line : 0,
-    .column = token ? token->column : 0,
-    .source_line = parser_get_source_line(parser, token)
-  };
-  diagnostic_log(DIAG_LEVEL_ERROR, loc, "%s", message);
-}
-
-static void parser_error_node(Parser *parser, const AstNode *node, const char *fmt, ...) {
-  parser->had_error = 1;
-  char message[256];
-  va_list args;
-  va_start(args, fmt);
-  vsnprintf(message, sizeof(message), fmt, args);
-  va_end(args);
-  SourceLocation loc = {
-    .filename = parser->filename,
-    .line = node ? node->line : 0,
-    .column = node ? node->column : 0,
-    .source_line = NULL
-  };
+  SourceLocation loc = {.filename = parser->filename,
+                        .line = token ? token->line : 0,
+                        .column = token ? token->column : 0,
+                        .source_line = parser_get_source_line(parser, token)};
   diagnostic_log(DIAG_LEVEL_ERROR, loc, "%s", message);
 }
 
@@ -278,10 +258,6 @@ static AstNode *parse_do_while_statement(Parser *parser, const Token *kw);
 
 static AstNode *parse_switch_statement(Parser *parser, const Token *kw);
 
-static void validate_switch_statement(Parser *parser, const AstNode *switch_node);
-
-static void validate_function_control_flow(Parser *parser, const AstNode *body);
-
 void parser_init(Parser *parser, const TokenArray *tokens, const char *source, const char *filename) {
   parser->tokens = tokens;
   parser->current = 0;
@@ -337,10 +313,7 @@ static AstFunction *parse_function(Parser *parser) {
         return NULL;
       }
       AstParam param = {
-        .type = param_type,
-        .name = parser_copy_lexeme(parser, param_name),
-        .length = param_name->length
-      };
+          .type = param_type, .name = parser_copy_lexeme(parser, param_name), .length = param_name->length};
       param_vector_push(parser, &params, param);
       if (parser_match(parser, TOKEN_COMMA)) {
         continue;
@@ -355,7 +328,6 @@ static AstFunction *parse_function(Parser *parser) {
   if (!body) {
     return NULL;
   }
-  validate_function_control_flow(parser, body);
   AstFunction *fn = parser_alloc(parser, sizeof(AstFunction));
   fn->name = parser_copy_lexeme(parser, name_tok);
   fn->length = name_tok->length;
@@ -692,208 +664,6 @@ static AstNode *parse_switch_statement(Parser *parser, const Token *kw) {
   return node;
 }
 
-typedef struct {
-  int32_t *items;
-  size_t count;
-  size_t capacity;
-} IntValueVector;
-
-typedef struct {
-  const char *name;
-  size_t length;
-  const AstNode *node;
-} NameRef;
-
-typedef struct {
-  NameRef *items;
-  size_t count;
-  size_t capacity;
-} NameRefVector;
-
-static void int_value_vector_push(Parser *parser, IntValueVector *vec, int32_t value) {
-  if (vec->count == vec->capacity) {
-    size_t new_cap = vec->capacity ? vec->capacity * 2 : 8;
-    int32_t *new_items = parser_alloc(parser, new_cap * sizeof(int32_t));
-    if (vec->items) {
-      memcpy(new_items, vec->items, vec->count * sizeof(int32_t));
-    }
-    vec->items = new_items;
-    vec->capacity = new_cap;
-  }
-  vec->items[vec->count++] = value;
-}
-
-static void name_ref_vector_push(Parser *parser, NameRefVector *vec, const char *name, size_t length,
-                                 const AstNode *node) {
-  if (vec->count == vec->capacity) {
-    size_t new_cap = vec->capacity ? vec->capacity * 2 : 8;
-    NameRef *new_items = parser_alloc(parser, new_cap * sizeof(NameRef));
-    if (vec->items) {
-      memcpy(new_items, vec->items, vec->count * sizeof(NameRef));
-    }
-    vec->items = new_items;
-    vec->capacity = new_cap;
-  }
-  vec->items[vec->count++] = (NameRef) {
-    .name = name,
-    .length = length,
-    .node = node
-  };
-}
-
-static int32_t int_value_vector_contains(const IntValueVector *vec, int32_t value) {
-  for (size_t i = 0; i < vec->count; i++) {
-    if (vec->items[i] == value) {
-      return 1;
-    }
-  }
-  return 0;
-}
-
-static int32_t name_ref_vector_contains(const NameRefVector *vec, const char *name, size_t length) {
-  for (size_t i = 0; i < vec->count; i++) {
-    if (vec->items[i].length == length && strncmp(vec->items[i].name, name, length) == 0) {
-      return 1;
-    }
-  }
-  return 0;
-}
-
-static void validate_switch_body(Parser *parser, const AstNode *node, int32_t nested_switch, IntValueVector *cases,
-                                 int32_t *has_default) {
-  if (!node) {
-    return;
-  }
-
-  if (node->kind == AST_NODE_SWITCH_STMT && nested_switch > 0) {
-    return;
-  }
-
-  switch (node->kind) {
-    case AST_NODE_BLOCK:
-      for (size_t i = 0; i < node->data.block.statements.count; i++) {
-        validate_switch_body(parser, node->data.block.statements.items[i], nested_switch, cases, has_default);
-      }
-      return;
-    case AST_NODE_IF_STMT:
-      validate_switch_body(parser, node->data.if_stmt.then_branch, nested_switch, cases, has_default);
-      validate_switch_body(parser, node->data.if_stmt.else_branch, nested_switch, cases, has_default);
-      return;
-    case AST_NODE_WHILE_STMT:
-      validate_switch_body(parser, node->data.while_stmt.body, nested_switch, cases, has_default);
-      return;
-    case AST_NODE_FOR_STMT:
-      validate_switch_body(parser, node->data.for_stmt.body, nested_switch, cases, has_default);
-      return;
-    case AST_NODE_DO_WHILE_STMT:
-      validate_switch_body(parser, node->data.do_while_stmt.body, nested_switch, cases, has_default);
-      return;
-    case AST_NODE_SWITCH_STMT:
-      validate_switch_body(parser, node->data.switch_stmt.body, nested_switch + 1, cases, has_default);
-      return;
-    case AST_NODE_CASE_STMT: {
-      const AstNode *value = node->data.case_stmt.value;
-      if (!value || value->kind != AST_NODE_INT_LITERAL) {
-        parser_error_node(parser, node, "case value must be integer literal");
-      } else {
-        int32_t case_value = value->data.int_literal.value;
-        if (int_value_vector_contains(cases, case_value)) {
-          parser_error_node(parser, node, "duplicate case value '%d'", case_value);
-        } else {
-          int_value_vector_push(parser, cases, case_value);
-        }
-      }
-      validate_switch_body(parser, node->data.case_stmt.statement, nested_switch, cases, has_default);
-      return;
-    }
-    case AST_NODE_DEFAULT_STMT:
-      if (*has_default) {
-        parser_error_node(parser, node, "duplicate default label");
-      } else {
-        *has_default = 1;
-      }
-      validate_switch_body(parser, node->data.default_stmt.statement, nested_switch, cases, has_default);
-      return;
-    case AST_NODE_LABEL_STMT:
-      validate_switch_body(parser, node->data.label_stmt.statement, nested_switch, cases, has_default);
-      return;
-    default:
-      return;
-  }
-}
-
-static void validate_switch_statement(Parser *parser, const AstNode *switch_node) {
-  IntValueVector cases = {0};
-  int32_t has_default = 0;
-  validate_switch_body(parser, switch_node->data.switch_stmt.body, 0, &cases, &has_default);
-}
-
-static void collect_labels_and_gotos(Parser *parser, const AstNode *node, NameRefVector *labels, NameRefVector *gotos) {
-  if (!node) {
-    return;
-  }
-  switch (node->kind) {
-    case AST_NODE_BLOCK:
-      for (size_t i = 0; i < node->data.block.statements.count; i++) {
-        collect_labels_and_gotos(parser, node->data.block.statements.items[i], labels, gotos);
-      }
-      return;
-    case AST_NODE_IF_STMT:
-      collect_labels_and_gotos(parser, node->data.if_stmt.then_branch, labels, gotos);
-      collect_labels_and_gotos(parser, node->data.if_stmt.else_branch, labels, gotos);
-      return;
-    case AST_NODE_WHILE_STMT:
-      collect_labels_and_gotos(parser, node->data.while_stmt.body, labels, gotos);
-      return;
-    case AST_NODE_FOR_STMT:
-      collect_labels_and_gotos(parser, node->data.for_stmt.body, labels, gotos);
-      return;
-    case AST_NODE_DO_WHILE_STMT:
-      collect_labels_and_gotos(parser, node->data.do_while_stmt.body, labels, gotos);
-      return;
-    case AST_NODE_SWITCH_STMT:
-      validate_switch_statement(parser, node);
-      collect_labels_and_gotos(parser, node->data.switch_stmt.body, labels, gotos);
-      return;
-    case AST_NODE_CASE_STMT:
-      collect_labels_and_gotos(parser, node->data.case_stmt.statement, labels, gotos);
-      return;
-    case AST_NODE_DEFAULT_STMT:
-      collect_labels_and_gotos(parser, node->data.default_stmt.statement, labels, gotos);
-      return;
-    case AST_NODE_LABEL_STMT:
-      name_ref_vector_push(parser, labels, node->data.label_stmt.label, node->data.label_stmt.length, node);
-      collect_labels_and_gotos(parser, node->data.label_stmt.statement, labels, gotos);
-      return;
-    case AST_NODE_GOTO_STMT:
-      name_ref_vector_push(parser, gotos, node->data.goto_stmt.label, node->data.goto_stmt.length, node);
-      return;
-    default:
-      return;
-  }
-}
-
-static void validate_function_control_flow(Parser *parser, const AstNode *body) {
-  NameRefVector labels = {0};
-  NameRefVector gotos = {0};
-
-  collect_labels_and_gotos(parser, body, &labels, &gotos);
-
-  for (size_t i = 0; i < labels.count; i++) {
-    for (size_t j = i + 1; j < labels.count; j++) {
-      if (labels.items[i].length == labels.items[j].length &&
-          strncmp(labels.items[i].name, labels.items[j].name, labels.items[i].length) == 0) {
-        parser_error_node(parser, labels.items[j].node, "duplicate label '%s'", labels.items[j].name);
-      }
-    }
-  }
-
-  for (size_t i = 0; i < gotos.count; i++) {
-    if (!name_ref_vector_contains(&labels, gotos.items[i].name, gotos.items[i].length)) {
-      parser_error_node(parser, gotos.items[i].node, "unknown label '%s'", gotos.items[i].name);
-    }
-  }
-}
 
 static AstNode *make_binary(Parser *parser, TokenKind op, const Token *token, AstNode *left, AstNode *right) {
   AstNode *node = parser_new_node(parser, AST_NODE_BINARY_EXPR, token);
@@ -923,9 +693,7 @@ static AstNode *make_identifier(Parser *parser, const Token *token) {
   return node;
 }
 
-static AstNode *parse_expression(Parser *parser) {
-  return parse_assignment(parser);
-}
+static AstNode *parse_expression(Parser *parser) { return parse_assignment(parser); }
 
 static AstNode *parse_assignment(Parser *parser) {
   AstNode *left = parse_logical_or(parser);
@@ -999,8 +767,8 @@ static AstNode *parse_multiplicative(Parser *parser) {
 }
 
 static AstNode *parse_unary(Parser *parser) {
-  if (parser_match(parser, TOKEN_MINUS) || parser_match(parser, TOKEN_PLUS) ||
-      parser_match(parser, TOKEN_EXCLAIM) || parser_match(parser, TOKEN_TILDE)) {
+  if (parser_match(parser, TOKEN_MINUS) || parser_match(parser, TOKEN_PLUS) || parser_match(parser, TOKEN_EXCLAIM) ||
+      parser_match(parser, TOKEN_TILDE)) {
     const Token *op = parser_previous(parser);
     AstNode *operand = parse_unary(parser);
     return make_unary(parser, op->kind, op, operand);
@@ -1139,9 +907,6 @@ ParseResult parser_parse(Parser *parser) {
   if (module->functions.count == 0) {
     parser_error_at(parser, parser_peek(parser), "expected function definition");
   }
-  ParseResult result = {
-    .module = module,
-    .had_error = parser->had_error
-  };
+  ParseResult result = {.module = module, .had_error = parser->had_error};
   return result;
 }
