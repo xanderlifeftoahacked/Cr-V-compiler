@@ -12,6 +12,8 @@ set(TARGET_SOURCES_NO_MAIN
         ${PROJECT_SOURCE_DIR}/src/lexer/lexer.c
         ${PROJECT_SOURCE_DIR}/src/lexer/token.c
         ${PROJECT_SOURCE_DIR}/src/utils/diagnostic.c
+        ${PROJECT_SOURCE_DIR}/src/semantic/semantic.c
+        ${PROJECT_SOURCE_DIR}/src/codegen/codegen.c
         ${PROJECT_SOURCE_DIR}/src/parser/parser.c
         ${PROJECT_SOURCE_DIR}/src/parser/ast_printer.c
 )
