@@ -12,14 +12,28 @@ set(TARGET_SOURCES_NO_MAIN
         ${PROJECT_SOURCE_DIR}/src/lexer/lexer.c
         ${PROJECT_SOURCE_DIR}/src/lexer/token.c
         ${PROJECT_SOURCE_DIR}/src/utils/diagnostic.c
+        ${PROJECT_SOURCE_DIR}/src/compiler/stdlib.c
         ${PROJECT_SOURCE_DIR}/src/semantic/semantic.c
+        ${PROJECT_SOURCE_DIR}/src/semantic/semantic_flow.c
+        ${PROJECT_SOURCE_DIR}/src/semantic/semantic_symbols.c
         ${PROJECT_SOURCE_DIR}/src/codegen/codegen.c
+        ${PROJECT_SOURCE_DIR}/src/codegen/codegen_common.c
+        ${PROJECT_SOURCE_DIR}/src/codegen/codegen_scope.c
+        ${PROJECT_SOURCE_DIR}/src/codegen/codegen_data.c
+        ${PROJECT_SOURCE_DIR}/src/codegen/codegen_control.c
+        ${PROJECT_SOURCE_DIR}/src/codegen/codegen_expr.c
+        ${PROJECT_SOURCE_DIR}/src/codegen/codegen_stmt.c
+        ${PROJECT_SOURCE_DIR}/src/codegen/codegen_function.c
         ${PROJECT_SOURCE_DIR}/src/parser/parser.c
+        ${PROJECT_SOURCE_DIR}/src/parser/parser_decl.c
+        ${PROJECT_SOURCE_DIR}/src/parser/parser_expr.c
+        ${PROJECT_SOURCE_DIR}/src/parser/parser_stmt.c
         ${PROJECT_SOURCE_DIR}/src/parser/ast_printer.c
 )
 
 add_executable(${TARGET_NAME} ${TARGET_SOURCES_NO_MAIN} ${PROJECT_SOURCE_DIR}/src/compiler/main.c)
 target_include_directories(${TARGET_NAME} PRIVATE ${TARGET_INCLUDE_DIR})
+target_compile_definitions(${TARGET_NAME} PRIVATE CRV_STDLIB_PATH="${PROJECT_SOURCE_DIR}/stdlib/rars.c")
 
 if (CMAKE_BUILD_TYPE STREQUAL "")
     message(WARNING "CMAKE_BUILD_TYPE is not set, fallback to debug build")
@@ -37,6 +51,7 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
     add_executable(${TEST_TARGET_NAME} ${TARGET_SOURCES_NO_MAIN} ${PROJECT_SOURCE_DIR}/tests/test_runner.c)
     target_include_directories(${TEST_TARGET_NAME} PRIVATE ${TARGET_INCLUDE_DIR})
     target_compile_definitions(${TEST_TARGET_NAME} PRIVATE TEST_ROOT="${PROJECT_SOURCE_DIR}/tests")
+    target_compile_definitions(${TEST_TARGET_NAME} PRIVATE CRV_STDLIB_PATH="${PROJECT_SOURCE_DIR}/stdlib/rars.c")
 
     target_compile_definitions(${TEST_TARGET_NAME} PRIVATE DEBUG)
     target_compile_options(${TEST_TARGET_NAME} PRIVATE -Wall -Wextra -Wpedantic -fsanitize=address)

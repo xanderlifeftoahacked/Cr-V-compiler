@@ -12,6 +12,7 @@ static const char *type_name(const AstTypeKind kind) {
   switch (kind) {
     case AST_TYPE_INT: return "int";
     case AST_TYPE_CHAR: return "char";
+    case AST_TYPE_POINTER: return "pointer";
     case AST_TYPE_ARRAY: return "array";
     default: return "?";
   }
@@ -24,6 +25,8 @@ static void print_type(const AstType *type) {
   }
   if (type->kind == AST_TYPE_ARRAY) {
     printf("%s[%d]", type_name(type->element_kind), type->array_size);
+  } else if (type->kind == AST_TYPE_POINTER) {
+    printf("%s*", type_name(type->element_kind));
   } else {
     printf("%s", type_name(type->kind));
   }
@@ -213,6 +216,9 @@ void ast_print_module(const AstModule *module) {
     return;
   }
   printf("module\n");
+  for (size_t i = 0; i < module->globals.count; i++) {
+    ast_print_node(module->globals.items[i], 1);
+  }
   for (size_t i = 0; i < module->functions.count; i++) {
     const AstFunction *fn = module->functions.items[i];
     ast_print_function_header(fn, 1);

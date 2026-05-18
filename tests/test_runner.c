@@ -5,6 +5,7 @@
 #include "parser/parser.h"
 #include "parser/ast_printer.h"
 #include "codegen/codegen.h"
+#include "compiler/stdlib.h"
 #include "semantic/semantic.h"
 #include "utils/diagnostic.h"
 
@@ -16,7 +17,8 @@ typedef enum {
   TEST_LEX,
   TEST_PARSE,
   TEST_SEMANTIC,
-  TEST_CODEGEN
+  TEST_CODEGEN,
+  TEST_CODEGEN_STDLIB
 } TestStage;
 
 typedef struct {
@@ -123,14 +125,50 @@ static int run_one(const TestCase *tc) {
     parser_destroy(&parser);
   }
 
-  if (ok && tc->stage == TEST_CODEGEN) {
+  if (ok && (tc->stage == TEST_CODEGEN || tc->stage == TEST_CODEGEN_STDLIB)) {
     Parser parser;
     parser_init(&parser, lexer_get_tokens(&lexer), source, path);
     ParseResult pr = parser_parse(&parser);
     if (pr.had_error) {
       ok = 0;
     }
-    if (ok && semantic_analyze(pr.module, path) != 0) {
+
+    const AstModule *module = pr.module;
+    char *stdlib_source = NULL;
+    Lexer stdlib_lexer;
+    Parser stdlib_parser;
+    int stdlib_lexer_ready = 0;
+    int stdlib_parser_ready = 0;
+    AstModule merged_module = {0};
+    int merged_module_ready = 0;
+
+    if (ok && tc->stage == TEST_CODEGEN_STDLIB) {
+      const char *stdlib_path = crv_default_stdlib_path();
+      stdlib_source = read_file(stdlib_path);
+      if (!stdlib_source) {
+        ok = 0;
+      } else {
+        lexer_init(&stdlib_lexer, stdlib_source, stdlib_path);
+        stdlib_lexer_ready = 1;
+        lexer_tokenize(&stdlib_lexer);
+        if (lexer_had_error(&stdlib_lexer)) {
+          ok = 0;
+        }
+      }
+      if (ok) {
+        parser_init(&stdlib_parser, lexer_get_tokens(&stdlib_lexer), stdlib_source, stdlib_path);
+        stdlib_parser_ready = 1;
+        ParseResult stdlib_pr = parser_parse(&stdlib_parser);
+        if (stdlib_pr.had_error || crv_merge_modules(&merged_module, stdlib_pr.module, pr.module) != 0) {
+          ok = 0;
+        } else {
+          merged_module_ready = 1;
+          module = &merged_module;
+        }
+      }
+    }
+
+    if (ok && semantic_analyze(module, path) != 0) {
       ok = 0;
     }
     if (ok) {
@@ -138,7 +176,7 @@ static int run_one(const TestCase *tc) {
       if (!tmp) {
         ok = 0;
       } else {
-        ok = codegen_emit_module(tmp, pr.module, path) == 0;
+        ok = codegen_emit_module(tmp, module, path) == 0;
         if (ok) {
           rewind(tmp);
           fseek(tmp, 0, SEEK_END);
@@ -167,6 +205,16 @@ static int run_one(const TestCase *tc) {
         }
       }
     }
+    if (merged_module_ready) {
+      crv_free_merged_module(&merged_module);
+    }
+    if (stdlib_parser_ready) {
+      parser_destroy(&stdlib_parser);
+    }
+    if (stdlib_lexer_ready) {
+      lexer_destroy(&stdlib_lexer);
+    }
+    free(stdlib_source);
     parser_destroy(&parser);
   }
 
@@ -192,6 +240,7 @@ int main(void) {
     {"parser/valid/logical_ops.c", 1, TEST_PARSE},
     {"parser/valid/control_flow.c", 1, TEST_PARSE},
     {"parser/valid/goto_with_label.c", 1, TEST_PARSE},
+    {"parser/valid/pointers.c", 1, TEST_PARSE},
 
     {"parser/invalid/empty_translation_unit.c", 0, TEST_PARSE},
     {"parser/invalid/trailing_comma_initializer.c", 0, TEST_PARSE},
@@ -204,6 +253,7 @@ int main(void) {
     {"parser/invalid/for_missing_semicolon.c", 0, TEST_PARSE},
 
     {"semantic/valid/basic_semantic_ok.c", 1, TEST_SEMANTIC},
+    {"semantic/valid/pointer_arithmetic.c", 1, TEST_SEMANTIC},
 
     {"semantic/invalid/undeclared_identifier.c", 0, TEST_SEMANTIC},
     {"semantic/invalid/unknown_function_call.c", 0, TEST_SEMANTIC},
@@ -224,10 +274,22 @@ int main(void) {
     {"semantic/invalid/return_array_value.c", 0, TEST_SEMANTIC},
     {"semantic/invalid/array_used_as_scalar_expr.c", 0, TEST_SEMANTIC},
     {"semantic/invalid/subscript_array_index.c", 0, TEST_SEMANTIC},
+    {"semantic/invalid/global_function_name_conflict.c", 0, TEST_SEMANTIC},
+    {"semantic/invalid/global_initializer_expression.c", 0, TEST_CODEGEN},
+    {"semantic/invalid/deref_non_pointer.c", 0, TEST_SEMANTIC},
+    {"semantic/invalid/address_of_non_lvalue.c", 0, TEST_SEMANTIC},
+    {"semantic/invalid/pointer_add_two_pointers.c", 0, TEST_SEMANTIC},
 
     {"codegen/valid/simple_main.c", 1, TEST_CODEGEN},
     {"codegen/valid/goto_with_label.c", 1, TEST_CODEGEN},
     {"codegen/valid/control_flow.c", 1, TEST_CODEGEN},
+    {"codegen/valid/arrays_globals_char.c", 1, TEST_CODEGEN},
+    {"codegen/valid/local_arrays_loop.c", 1, TEST_CODEGEN},
+    {"codegen/valid/global_arrays.c", 1, TEST_CODEGEN},
+    {"codegen/valid/char_arrays.c", 1, TEST_CODEGEN},
+    {"codegen/valid/pointers.c", 1, TEST_CODEGEN},
+    {"codegen/valid/pointer_arithmetic.c", 1, TEST_CODEGEN},
+    {"codegen/valid/stdlib_print_int.c", 1, TEST_CODEGEN_STDLIB},
   };
 
   int passed = 0;
