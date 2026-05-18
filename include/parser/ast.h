@@ -8,6 +8,7 @@
 typedef enum {
   AST_TYPE_INT,
   AST_TYPE_CHAR,
+  AST_TYPE_POINTER,
   AST_TYPE_ARRAY
 } AstTypeKind;
 
@@ -77,6 +78,7 @@ typedef struct {
 } AstFunctionVector;
 
 typedef struct {
+  AstNodeVector globals;
   AstFunctionVector functions;
 } AstModule;
 

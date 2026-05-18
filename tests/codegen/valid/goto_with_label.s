@@ -6,18 +6,26 @@ main:
   sw ra, 8(sp)
   addi s0, sp, 16
   li a0, 1
-  sw a0, -12(s0)
+  addi t0, s0, -12
+  sw a0, 0(t0)
   j done
-  lw a0, -12(s0)
+  addi a0, s0, -12
+  addi sp, sp, -4
+  sw a0, 0(sp)
+  addi a0, s0, -12
+  lw a0, 0(a0)
   addi sp, sp, -4
   sw a0, 0(sp)
   li a0, 100
   lw t0, 0(sp)
   addi sp, sp, 4
   add a0, t0, a0
-  sw a0, -12(s0)
+  lw t0, 0(sp)
+  addi sp, sp, 4
+  sw a0, 0(t0)
 done:
-  lw a0, -12(s0)
+  addi a0, s0, -12
+  lw a0, 0(a0)
   j main_epilogue
   li a0, 0
 main_epilogue:
@@ -26,4 +34,3 @@ main_epilogue:
   addi sp, sp, 16
   li a7, 10
   ecall
-
