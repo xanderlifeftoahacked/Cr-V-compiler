@@ -33,7 +33,7 @@ RARS_JAR=/path/to/rars1_6.jar ./tests/rars_e2e.py
 ## Запуск компилятора:
 
 ```bash
-./tools/run.py <filaneme>.c
+RARS_JAR=/path/to/rars1_6.jar ./tools/run.py <filaneme>.c
 ```
 
 Компилятор `crv` сейчас генерирует RARS ассемблер с поддержкой
