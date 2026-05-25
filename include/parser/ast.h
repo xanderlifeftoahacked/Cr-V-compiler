@@ -12,6 +12,12 @@ typedef enum {
   AST_TYPE_ARRAY
 } AstTypeKind;
 
+typedef enum {
+  AST_STORAGE_NONE,
+  AST_STORAGE_STATIC,
+  AST_STORAGE_EXTERN
+} AstStorageClass;
+
 typedef struct {
   AstTypeKind kind;
   AstTypeKind element_kind;
@@ -19,7 +25,6 @@ typedef struct {
 } AstType;
 
 typedef enum {
-  AST_NODE_FUNCTION,
   AST_NODE_BLOCK,
   AST_NODE_RETURN_STMT,
   AST_NODE_EXPR_STMT,
@@ -32,11 +37,13 @@ typedef enum {
   AST_NODE_CASE_STMT,
   AST_NODE_DEFAULT_STMT,
   AST_NODE_BREAK_STMT,
+  AST_NODE_CONTINUE_STMT,
   AST_NODE_GOTO_STMT,
   AST_NODE_LABEL_STMT,
   AST_NODE_BINARY_EXPR,
   AST_NODE_UNARY_EXPR,
   AST_NODE_INT_LITERAL,
+  AST_NODE_STRING_LITERAL,
   AST_NODE_IDENTIFIER,
   AST_NODE_SUBSCRIPT_EXPR,
   AST_NODE_CALL_EXPR,
@@ -69,6 +76,8 @@ typedef struct {
   AstType return_type;
   AstNode *body;
   AstParamVector params;
+  AstStorageClass storage;
+  const char *filename;
 } AstFunction;
 
 typedef struct {
@@ -105,6 +114,8 @@ struct AstNode {
       char *name;
       size_t length;
       AstNode *initializer;
+      AstStorageClass storage;
+      const char *filename;
     } var_decl;
 
     struct {
@@ -145,10 +156,6 @@ struct AstNode {
     } default_stmt;
 
     struct {
-      int32_t unused;
-    } break_stmt;
-
-    struct {
       char *label;
       size_t length;
     } goto_stmt;
@@ -168,11 +175,17 @@ struct AstNode {
     struct {
       AstNode *operand;
       TokenKind op;
+      int32_t is_postfix;
     } unary;
 
     struct {
       int32_t value;
     } int_literal;
+
+    struct {
+      char *value;
+      size_t length;
+    } string_literal;
 
     struct {
       char *name;

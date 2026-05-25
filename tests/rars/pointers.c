@@ -22,7 +22,7 @@ int main() {
     *p = 5;
     p[2] = first(values) + x;
 
-    print_int(sum_ptr(values, 4));
-    putchar('\n');
+    rars_print_int(sum_ptr(values, 4));
+    rars_print_char('\n');
     return 0;
 }

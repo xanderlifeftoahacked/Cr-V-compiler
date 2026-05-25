@@ -105,7 +105,16 @@ AstNode *parse_statement(Parser *parser) {
     }
 
     AstNode *node = parser_new_node(parser, AST_NODE_BREAK_STMT, kw);
-    node->data.break_stmt.unused = 0;
+    return node;
+  }
+
+  if (parser_match(parser, TOKEN_KW_continue)) {
+    const Token *kw = parser_previous(parser);
+    if (!parser_expect(parser, TOKEN_SEMICOLON, "expected ';' after continue")) {
+      return NULL;
+    }
+
+    AstNode *node = parser_new_node(parser, AST_NODE_CONTINUE_STMT, kw);
     return node;
   }
 

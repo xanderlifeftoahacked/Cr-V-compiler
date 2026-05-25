@@ -3,6 +3,7 @@
 #include "utils/diagnostic.h"
 
 #include <stdlib.h>
+#include <string.h>
 
 CodegenScope *scope_push(CodegenContext *ctx) {
   CodegenScope *scope = malloc(sizeof(CodegenScope));
@@ -31,14 +32,27 @@ void scope_pop(CodegenContext *ctx) {
 }
 
 CodegenSymbol *scope_find(const CodegenContext *ctx, const char *name, size_t length) {
+  CodegenSymbol *fallback = NULL;
   for (const CodegenScope *scope = ctx->scope; scope; scope = scope->parent) {
     for (CodegenSymbol *it = scope->symbols; it; it = it->next) {
       if (names_equal(it->name, it->length, name, length)) {
-        return it;
+        if (it->storage == CODEGEN_STORAGE_LOCAL) {
+          return it;
+        }
+        if (it->linkage == AST_STORAGE_STATIC) {
+          if (it->filename && ctx->current_file && names_equal(it->filename, strlen(it->filename), ctx->current_file,
+                                                               strlen(ctx->current_file))) {
+            return it;
+          }
+          continue;
+        }
+        if (!fallback || (!fallback->is_definition && it->is_definition)) {
+          fallback = it;
+        }
       }
     }
   }
-  return NULL;
+  return fallback;
 }
 
 static int32_t allocate_local_offset(CodegenContext *ctx, AstType type) {
@@ -65,7 +79,60 @@ CodegenSymbol *scope_declare_current(CodegenContext *ctx, const char *name, size
   symbol->length = length;
   symbol->type = type;
   symbol->storage = storage;
+  symbol->linkage = AST_STORAGE_NONE;
+  symbol->filename = NULL;
+  symbol->is_definition = 1;
   symbol->offset = storage == CODEGEN_STORAGE_LOCAL ? allocate_local_offset(ctx, type) : 0;
+  symbol->next = ctx->scope->symbols;
+  ctx->scope->symbols = symbol;
+  return symbol;
+}
+
+CodegenSymbol *scope_declare_global(CodegenContext *ctx, const AstNode *global) {
+  if (!ctx->scope || !global || global->kind != AST_NODE_VAR_DECL) {
+    return NULL;
+  }
+
+  const char *name = global->data.var_decl.name;
+  size_t length = global->data.var_decl.length;
+  AstStorageClass linkage = global->data.var_decl.storage;
+  const char *filename = global->data.var_decl.filename;
+  int32_t is_definition = linkage != AST_STORAGE_EXTERN;
+
+  for (CodegenSymbol *it = ctx->scope->symbols; it; it = it->next) {
+    if (!names_equal(it->name, it->length, name, length)) {
+      continue;
+    }
+    int32_t same_file = it->filename && filename && names_equal(it->filename, strlen(it->filename), filename,
+                                                                strlen(filename));
+    if (it->linkage == AST_STORAGE_STATIC || linkage == AST_STORAGE_STATIC) {
+      if (same_file) {
+        return NULL;
+      }
+      continue;
+    }
+    if (it->is_definition && is_definition) {
+      return NULL;
+    }
+    if (is_definition) {
+      it->is_definition = 1;
+      it->type = global->data.var_decl.type;
+    }
+    return it;
+  }
+
+  CodegenSymbol *symbol = malloc(sizeof(CodegenSymbol));
+  if (!symbol) {
+    LOG(FATAL, "out of memory");
+  }
+  symbol->name = name;
+  symbol->length = length;
+  symbol->type = global->data.var_decl.type;
+  symbol->storage = CODEGEN_STORAGE_GLOBAL;
+  symbol->linkage = linkage;
+  symbol->filename = filename;
+  symbol->is_definition = is_definition;
+  symbol->offset = 0;
   symbol->next = ctx->scope->symbols;
   ctx->scope->symbols = symbol;
   return symbol;

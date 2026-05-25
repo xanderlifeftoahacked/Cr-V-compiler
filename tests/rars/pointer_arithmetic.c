@@ -7,8 +7,8 @@ int main() {
     int value = *(p + 1);
     int total = diff + value + (r - p);
 
-    print_int(total);
-    putchar('\n');
+    rars_print_int(total);
+    rars_print_char('\n');
     return 0;
 }
 

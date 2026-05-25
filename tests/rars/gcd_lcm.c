@@ -12,11 +12,11 @@ int lcm(int a, int b) {
 }
 
 int main() {
-    print_int(gcd(48, 18));
-    putchar('\n');
-    print_int(lcm(12, 18));
-    putchar('\n');
-    print_int(gcd(100, 75));
-    putchar('\n');
+    rars_print_int(gcd(48, 18));
+    rars_print_char('\n');
+    rars_print_int(lcm(12, 18));
+    rars_print_char('\n');
+    rars_print_int(gcd(100, 75));
+    rars_print_char('\n');
     return 0;
 }

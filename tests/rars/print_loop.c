@@ -6,8 +6,8 @@ int main() {
         sum = sum + i;
     }
 
-    print_int(sum);
-    putchar('\n');
+    rars_print_int(sum);
+    rars_print_char('\n');
 
     return 0;
 }

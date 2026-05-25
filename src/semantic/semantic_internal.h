@@ -10,6 +10,9 @@ typedef struct Symbol {
   const char *name;
   size_t length;
   AstType type;
+  AstStorageClass storage;
+  const char *filename;
+  int32_t is_definition;
   struct Symbol *next;
 } Symbol;
 
@@ -23,6 +26,9 @@ typedef struct FunctionSymbol {
   size_t length;
   size_t param_count;
   const AstFunction *function;
+  AstStorageClass storage;
+  const char *filename;
+  int32_t is_definition;
   struct FunctionSymbol *next;
 } FunctionSymbol;
 
@@ -67,6 +73,7 @@ typedef struct {
   int32_t loop_depth;
   int32_t switch_depth;
   AstType current_return_type;
+  const char *current_file;
 } SemanticContext;
 
 int32_t sem_names_equal(const char *lhs, size_t lhs_len, const char *rhs, size_t rhs_len);
@@ -75,6 +82,7 @@ void semantic_error(SemanticContext *ctx, const AstNode *node, const char *fmt, 
 Scope *sem_scope_push(SemanticContext *ctx);
 void sem_scope_pop(SemanticContext *ctx);
 int32_t sem_scope_declare_current(SemanticContext *ctx, const char *name, size_t length, AstType type);
+int32_t sem_scope_declare_global(SemanticContext *ctx, const AstNode *global);
 const Symbol *sem_scope_find(const SemanticContext *ctx, const char *name, size_t length);
 int32_t sem_scope_lookup(const SemanticContext *ctx, const char *name, size_t length);
 

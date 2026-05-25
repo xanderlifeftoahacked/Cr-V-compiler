@@ -6,7 +6,7 @@ int read_matrix(int *m, int n) {
     int total = n * n;
     int i = 0;
     while (i < total) {
-        m[i] = read_int();
+        m[i] = rars_read_int();
         i = i + 1;
     }
     return 0;
@@ -36,20 +36,20 @@ int print_matrix(int *m, int n) {
     while (i < n) {
         int j = 0;
         while (j < n) {
-            print_int(m[i * n + j]);
+            rars_print_int(m[i * n + j]);
             if (j < n - 1) {
-                putchar(' ');
+                rars_print_char(' ');
             }
             j = j + 1;
         }
-        putchar('\n');
+        rars_print_char('\n');
         i = i + 1;
     }
     return 0;
 }
 
 int main() {
-    int n = read_int();
+    int n = rars_read_int();
     read_matrix(mat_a, n);
     read_matrix(mat_b, n);
     matmul(mat_c, mat_a, mat_b, n);

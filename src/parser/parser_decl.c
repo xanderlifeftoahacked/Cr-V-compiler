@@ -61,7 +61,8 @@ static int32_t parse_array_suffix(Parser *parser, AstType *type) {
   return 1;
 }
 
-AstFunction *parse_function_after_header(Parser *parser, AstType return_type, const Token *name_tok) {
+AstFunction *parse_function_after_header(Parser *parser, AstType return_type, const Token *name_tok,
+                                         AstStorageClass storage) {
   if (!parser_expect(parser, TOKEN_LPAREN, "expected '('")) {
     return NULL;
   }
@@ -104,9 +105,13 @@ AstFunction *parse_function_after_header(Parser *parser, AstType return_type, co
     return NULL;
   }
 
-  AstNode *body = parse_block(parser);
-  if (!body) {
-    return NULL;
+  AstNode *body = NULL;
+  if (parser_match(parser, TOKEN_SEMICOLON)) {
+  } else {
+    body = parse_block(parser);
+    if (!body) {
+      return NULL;
+    }
   }
 
   AstFunction *fn = parser_alloc(parser, sizeof(AstFunction));
@@ -115,6 +120,8 @@ AstFunction *parse_function_after_header(Parser *parser, AstType return_type, co
   fn->return_type = return_type;
   fn->body = body;
   fn->params = params;
+  fn->storage = storage;
+  fn->filename = parser->filename;
   return fn;
 }
 
@@ -129,11 +136,11 @@ AstFunction *parse_function(Parser *parser) {
     return NULL;
   }
 
-  return parse_function_after_header(parser, return_type, name_tok);
+  return parse_function_after_header(parser, return_type, name_tok, AST_STORAGE_NONE);
 }
 
 AstNode *parse_variable_declaration_after_name(Parser *parser, const Token *type_token, AstType type,
-                                               const Token *name_tok) {
+                                               const Token *name_tok, AstStorageClass storage) {
   int32_t array_status = parse_array_suffix(parser, &type);
   if (array_status < 0) {
     return NULL;
@@ -141,6 +148,11 @@ AstNode *parse_variable_declaration_after_name(Parser *parser, const Token *type
 
   AstNode *initializer = NULL;
   if (parser_match(parser, TOKEN_ASSIGN)) {
+    if (storage == AST_STORAGE_EXTERN) {
+      parser_error_at(parser, parser_previous(parser), "extern variable '%.*s' cannot have an initializer",
+                      (int32_t) name_tok->length, name_tok->start);
+      return NULL;
+    }
     initializer = parse_initializer(parser);
     if (!initializer) {
       return NULL;
@@ -156,6 +168,8 @@ AstNode *parse_variable_declaration_after_name(Parser *parser, const Token *type
   node->data.var_decl.name = parser_copy_lexeme(parser, name_tok);
   node->data.var_decl.length = name_tok->length;
   node->data.var_decl.initializer = initializer;
+  node->data.var_decl.storage = storage;
+  node->data.var_decl.filename = parser->filename;
   return node;
 }
 
@@ -169,5 +183,5 @@ AstNode *parse_variable_declaration(Parser *parser, const Token *type_token, Ast
     return NULL;
   }
 
-  return parse_variable_declaration_after_name(parser, type_token, type, name_tok);
+  return parse_variable_declaration_after_name(parser, type_token, type, name_tok, AST_STORAGE_NONE);
 }

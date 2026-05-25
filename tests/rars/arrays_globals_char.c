@@ -11,7 +11,7 @@ int main() {
     bytes[0] = marker;
     g = local[1] + bytes[0] + letters[1];
 
-    print_int(g);
-    putchar('\n');
+    rars_print_int(g);
+    rars_print_char('\n');
     return 0;
 }

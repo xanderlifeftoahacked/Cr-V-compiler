@@ -9,7 +9,7 @@ int main() {
     }
 
     letters[2] = 'A';
-    print_int(sum + letters[2]);
-    putchar('\n');
+    rars_print_int(sum + letters[2]);
+    rars_print_char('\n');
     return 0;
 }

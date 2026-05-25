@@ -54,6 +54,11 @@ static void ast_print_block(const AstNode *node, const int depth) {
 
 static void ast_print_function_header(const AstFunction *fn, const int depth) {
   print_indent(depth);
+  if (fn->storage == AST_STORAGE_STATIC) {
+    printf("static ");
+  } else if (fn->storage == AST_STORAGE_EXTERN) {
+    printf("extern ");
+  }
   printf("fn %s : ", fn->name);
   print_type(&fn->return_type);
   if (fn->params.count > 0) {
@@ -64,6 +69,9 @@ static void ast_print_function_header(const AstFunction *fn, const int depth) {
       printf(" %s", fn->params.items[i].name);
     }
     printf(")");
+  }
+  if (!fn->body) {
+    printf(" decl");
   }
   printf("\n");
 }
@@ -90,6 +98,11 @@ static void ast_print_node(const AstNode *node, const int depth) {
       break;
     case AST_NODE_VAR_DECL:
       print_indent(depth);
+      if (node->data.var_decl.storage == AST_STORAGE_STATIC) {
+        printf("static ");
+      } else if (node->data.var_decl.storage == AST_STORAGE_EXTERN) {
+        printf("extern ");
+      }
       printf("var ");
       print_type(&node->data.var_decl.type);
       printf(" %s", node->data.var_decl.name);
@@ -154,6 +167,10 @@ static void ast_print_node(const AstNode *node, const int depth) {
       print_indent(depth);
       printf("break\n");
       break;
+    case AST_NODE_CONTINUE_STMT:
+      print_indent(depth);
+      printf("continue\n");
+      break;
     case AST_NODE_GOTO_STMT:
       print_indent(depth);
       printf("goto %s\n", node->data.goto_stmt.label);
@@ -171,12 +188,44 @@ static void ast_print_node(const AstNode *node, const int depth) {
       break;
     case AST_NODE_UNARY_EXPR:
       print_indent(depth);
-      printf("unary %s\n", op_string(node->data.unary.op));
+      printf("%s %s\n", node->data.unary.is_postfix ? "postfix" : "unary", op_string(node->data.unary.op));
       ast_print_node(node->data.unary.operand, depth + 1);
       break;
     case AST_NODE_INT_LITERAL:
       print_indent(depth);
       printf("int %d\n", node->data.int_literal.value);
+      break;
+    case AST_NODE_STRING_LITERAL:
+      print_indent(depth);
+      printf("string \"");
+      for (size_t i = 0; i < node->data.string_literal.length; i++) {
+        unsigned char ch = (unsigned char) node->data.string_literal.value[i];
+        switch (ch) {
+          case '\n':
+            printf("\\n");
+            break;
+          case '\t':
+            printf("\\t");
+            break;
+          case '\r':
+            printf("\\r");
+            break;
+          case '\\':
+            printf("\\\\");
+            break;
+          case '"':
+            printf("\\\"");
+            break;
+          default:
+            if (ch >= 32 && ch <= 126) {
+              putchar(ch);
+            } else {
+              printf("\\%03o", ch);
+            }
+            break;
+        }
+      }
+      printf("\"\n");
       break;
     case AST_NODE_IDENTIFIER:
       print_indent(depth);

@@ -30,5 +30,4 @@ main_epilogue:
   lw ra, -8(s0)
   lw s0, -4(s0)
   addi sp, sp, 16
-  li a7, 10
-  ecall
+  call rars_exit2

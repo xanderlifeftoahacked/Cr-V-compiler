@@ -30,11 +30,11 @@ int isort(int *arr, int n) {
 int main() {
     int xs[7] = {5, 3, 8, 1, 9, 2, 7};
     isort(xs, 7);
-    print_int(xs[0]);
-    putchar('\n');
-    print_int(xs[6]);
-    putchar('\n');
-    print_int(array_sum(xs, 7));
-    putchar('\n');
+    rars_print_int(xs[0]);
+    rars_print_char('\n');
+    rars_print_int(xs[6]);
+    rars_print_char('\n');
+    rars_print_int(array_sum(xs, 7));
+    rars_print_char('\n');
     return 0;
 }

@@ -281,6 +281,7 @@ static Token lex_string(Lexer *lexer) {
   Token token = token_create(TOKEN_STRING_LITERAL, start,
                              lexer->current - start, line, column);
   token.value.string_value = buffer;
+  token.string_length = length;
   return token;
 }
 

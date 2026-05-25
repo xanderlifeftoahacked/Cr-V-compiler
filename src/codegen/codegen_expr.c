@@ -1,5 +1,7 @@
 #include "codegen_internal.h"
 
+#include <stdio.h>
+
 static void emit_push_a0(CodegenContext *ctx) {
   emit_line(ctx, "  addi sp, sp, -4");
   emit_line(ctx, "  sw a0, 0(sp)");
@@ -12,7 +14,13 @@ static void emit_pop_t0(CodegenContext *ctx) {
 
 static void emit_load_address(CodegenContext *ctx, const CodegenSymbol *symbol) {
   if (symbol->storage == CODEGEN_STORAGE_GLOBAL) {
-    emit_line(ctx, "  la a0, %.*s", (int32_t) symbol->length, symbol->name);
+    fprintf(ctx->out, "  la a0, ");
+    if (symbol->linkage == AST_STORAGE_STATIC) {
+      emit_static_label_ref(ctx, symbol->filename, symbol->name, symbol->length);
+    } else {
+      fprintf(ctx->out, "%.*s", (int32_t) symbol->length, symbol->name);
+    }
+    fprintf(ctx->out, "\n");
   } else {
     emit_line(ctx, "  addi a0, s0, %d", symbol->offset);
   }
@@ -31,6 +39,14 @@ static void emit_store_to_address(CodegenContext *ctx, AstType type) {
     emit_line(ctx, "  sb a0, 0(t0)");
   } else {
     emit_line(ctx, "  sw a0, 0(t0)");
+  }
+}
+
+static void emit_store_to_t2(CodegenContext *ctx, AstType type) {
+  if (type.kind == AST_TYPE_CHAR) {
+    emit_line(ctx, "  sb a0, 0(t2)");
+  } else {
+    emit_line(ctx, "  sw a0, 0(t2)");
   }
 }
 
@@ -54,6 +70,72 @@ static AstType pointer_type_to(AstType type) {
       .array_size = 0,
   };
   return pointer;
+}
+
+static AstType char_pointer_type(void) {
+  AstType pointer = {
+      .kind = AST_TYPE_POINTER,
+      .element_kind = AST_TYPE_CHAR,
+      .array_size = 0,
+  };
+  return pointer;
+}
+
+static int32_t is_assignment_operator(TokenKind op) {
+  switch (op) {
+    case TOKEN_ASSIGN:
+    case TOKEN_PLUS_ASSIGN:
+    case TOKEN_MINUS_ASSIGN:
+    case TOKEN_STAR_ASSIGN:
+    case TOKEN_DIV_ASSIGN:
+    case TOKEN_MOD_ASSIGN:
+    case TOKEN_AMPERSAND_ASSIGN:
+    case TOKEN_PIPE_ASSIGN:
+    case TOKEN_CARET_ASSIGN:
+    case TOKEN_LSHIFT_ASSIGN:
+    case TOKEN_RSHIFT_ASSIGN:
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+static int32_t is_update_operator(TokenKind op) {
+  return op == TOKEN_PLUS_PLUS || op == TOKEN_MINUS_MINUS;
+}
+
+static TokenKind assignment_binary_operator(TokenKind op) {
+  switch (op) {
+    case TOKEN_PLUS_ASSIGN:
+      return TOKEN_PLUS;
+    case TOKEN_MINUS_ASSIGN:
+      return TOKEN_MINUS;
+    case TOKEN_STAR_ASSIGN:
+      return TOKEN_STAR;
+    case TOKEN_DIV_ASSIGN:
+      return TOKEN_DIV;
+    case TOKEN_MOD_ASSIGN:
+      return TOKEN_MOD;
+    case TOKEN_AMPERSAND_ASSIGN:
+      return TOKEN_AMPERSAND;
+    case TOKEN_PIPE_ASSIGN:
+      return TOKEN_PIPE;
+    case TOKEN_CARET_ASSIGN:
+      return TOKEN_CARET;
+    case TOKEN_LSHIFT_ASSIGN:
+      return TOKEN_LSHIFT;
+    case TOKEN_RSHIFT_ASSIGN:
+      return TOKEN_RSHIFT;
+    default:
+      return op;
+  }
+}
+
+static void emit_scale_a0(CodegenContext *ctx, int32_t scale) {
+  if (scale > 1) {
+    emit_line(ctx, "  li t1, %d", scale);
+    emit_line(ctx, "  mul a0, a0, t1");
+  }
 }
 
 static AstType expr_type(CodegenContext *ctx, const AstNode *node) {
@@ -87,8 +169,17 @@ static AstType expr_type(CodegenContext *ctx, const AstNode *node) {
         AstType operand_type = expr_type(ctx, node->data.unary.operand);
         return pointer_type_to(operand_type);
       }
+      if (is_update_operator(node->data.unary.op)) {
+        return expr_type(ctx, node->data.unary.operand);
+      }
       return invalid;
+    case AST_NODE_STRING_LITERAL:
+      return char_pointer_type();
     case AST_NODE_BINARY_EXPR: {
+      if (is_assignment_operator(node->data.binary.op)) {
+        return expr_type(ctx, node->data.binary.left);
+      }
+
       AstType left_type = expr_type(ctx, node->data.binary.left);
       AstType right_type = expr_type(ctx, node->data.binary.right);
       int32_t left_ptr = left_type.kind == AST_TYPE_POINTER;
@@ -183,59 +274,6 @@ static AstType emit_lvalue_address(CodegenContext *ctx, const AstNode *node) {
   return element_type;
 }
 
-static int32_t name_is(const char *name, size_t length, const char *expected, size_t expected_length) {
-  return names_equal(name, length, expected, expected_length);
-}
-
-static int32_t emit_rars_syscall(CodegenContext *ctx, const AstNode *node, size_t value_arg_count) {
-  size_t expected_arg_count = value_arg_count + 1;
-  if (node->data.call.args.count != expected_arg_count) {
-    codegen_error(ctx, node, "RARS syscall intrinsic expects %zu arguments", expected_arg_count);
-    return 1;
-  }
-
-  if (value_arg_count == 0) {
-    emit_expr(ctx, node->data.call.args.items[0]);
-    if (ctx->had_error) {
-      return 1;
-    }
-    emit_line(ctx, "  mv a7, a0");
-    emit_line(ctx, "  ecall");
-    return 0;
-  }
-
-  emit_expr(ctx, node->data.call.args.items[0]);
-  if (ctx->had_error) {
-    return 1;
-  }
-  emit_push_a0(ctx);
-
-  emit_expr(ctx, node->data.call.args.items[1]);
-  if (ctx->had_error) {
-    return 1;
-  }
-
-  if (value_arg_count == 1) {
-    emit_pop_t0(ctx);
-    emit_line(ctx, "  mv a7, t0");
-    emit_line(ctx, "  ecall");
-    return 0;
-  }
-
-  emit_push_a0(ctx);
-  emit_expr(ctx, node->data.call.args.items[2]);
-  if (ctx->had_error) {
-    return 1;
-  }
-  emit_line(ctx, "  mv a1, a0");
-  emit_pop_t0(ctx);
-  emit_line(ctx, "  mv a0, t0");
-  emit_pop_t0(ctx);
-  emit_line(ctx, "  mv a7, t0");
-  emit_line(ctx, "  ecall");
-  return 0;
-}
-
 static void emit_binary_stack(CodegenContext *ctx, TokenKind op) {
   emit_pop_t0(ctx);
   switch (op) {
@@ -307,6 +345,100 @@ static void emit_binary_stack(CodegenContext *ctx, TokenKind op) {
   }
 }
 
+static void emit_update_expr(CodegenContext *ctx, const AstNode *node) {
+  AstType target_type = emit_lvalue_address(ctx, node->data.unary.operand);
+  if (ctx->had_error) {
+    return;
+  }
+  if (target_type.kind == AST_TYPE_ARRAY) {
+    codegen_error(ctx, node, "array value is not assignable");
+    return;
+  }
+
+  emit_line(ctx, "  mv t2, a0");
+  emit_load_from_address(ctx, target_type);
+  if (node->data.unary.is_postfix) {
+    emit_line(ctx, "  mv t3, a0");
+  }
+
+  int32_t delta = node->data.unary.op == TOKEN_PLUS_PLUS ? 1 : -1;
+  if (target_type.kind == AST_TYPE_POINTER) {
+    int32_t element_size = type_size(pointer_element_type(target_type));
+    if (element_size == 1) {
+      emit_line(ctx, "  addi a0, a0, %d", delta);
+    } else {
+      emit_line(ctx, "  li t1, %d", element_size);
+      if (delta > 0) {
+        emit_line(ctx, "  add a0, a0, t1");
+      } else {
+        emit_line(ctx, "  sub a0, a0, t1");
+      }
+    }
+  } else {
+    emit_line(ctx, "  addi a0, a0, %d", delta);
+  }
+
+  emit_store_to_t2(ctx, target_type);
+  if (node->data.unary.is_postfix) {
+    emit_line(ctx, "  mv a0, t3");
+  }
+}
+
+static void emit_assignment_expr(CodegenContext *ctx, const AstNode *node) {
+  AstType target_type = emit_lvalue_address(ctx, node->data.binary.left);
+  if (ctx->had_error) {
+    return;
+  }
+  if (target_type.kind == AST_TYPE_ARRAY) {
+    codegen_error(ctx, node, "array value is not assignable");
+    return;
+  }
+
+  emit_push_a0(ctx);
+
+  if (node->data.binary.op == TOKEN_ASSIGN) {
+    emit_expr(ctx, node->data.binary.right);
+    if (ctx->had_error) {
+      return;
+    }
+    if (target_type.kind != AST_TYPE_POINTER && is_array_value_expression(ctx, node->data.binary.right)) {
+      codegen_error(ctx, node, "array value cannot be assigned to a scalar expression");
+      return;
+    }
+    emit_pop_t0(ctx);
+    emit_store_to_address(ctx, target_type);
+    return;
+  }
+
+  emit_load_from_address(ctx, target_type);
+  emit_push_a0(ctx);
+
+  emit_expr(ctx, node->data.binary.right);
+  if (ctx->had_error) {
+    return;
+  }
+  if (is_array_value_expression(ctx, node->data.binary.right)) {
+    codegen_error(ctx, node, "array value cannot be used in compound assignment");
+    return;
+  }
+
+  if (target_type.kind == AST_TYPE_POINTER &&
+      (node->data.binary.op == TOKEN_PLUS_ASSIGN || node->data.binary.op == TOKEN_MINUS_ASSIGN)) {
+    emit_scale_a0(ctx, type_size(pointer_element_type(target_type)));
+    emit_pop_t0(ctx);
+    if (node->data.binary.op == TOKEN_PLUS_ASSIGN) {
+      emit_line(ctx, "  add a0, t0, a0");
+    } else {
+      emit_line(ctx, "  sub a0, t0, a0");
+    }
+  } else {
+    emit_binary_stack(ctx, assignment_binary_operator(node->data.binary.op));
+  }
+
+  emit_pop_t0(ctx);
+  emit_store_to_address(ctx, target_type);
+}
+
 void emit_expr(CodegenContext *ctx, const AstNode *node) {
   if (!node || ctx->had_error) {
     return;
@@ -315,6 +447,11 @@ void emit_expr(CodegenContext *ctx, const AstNode *node) {
   switch (node->kind) {
     case AST_NODE_INT_LITERAL:
       emit_line(ctx, "  li a0, %d", node->data.int_literal.value);
+      return;
+    case AST_NODE_STRING_LITERAL:
+      fprintf(ctx->out, "  la a0, ");
+      emit_string_label_ref(ctx, node);
+      fprintf(ctx->out, "\n");
       return;
     case AST_NODE_IDENTIFIER: {
       CodegenSymbol *symbol = scope_find(ctx, node->data.identifier.name, node->data.identifier.length);
@@ -337,6 +474,10 @@ void emit_expr(CodegenContext *ctx, const AstNode *node) {
           return;
         }
         emit_load_from_address(ctx, type);
+        return;
+      }
+      if (is_update_operator(node->data.unary.op)) {
+        emit_update_expr(ctx, node);
         return;
       }
       emit_expr(ctx, node->data.unary.operand);
@@ -364,27 +505,8 @@ void emit_expr(CodegenContext *ctx, const AstNode *node) {
           return;
       }
     case AST_NODE_BINARY_EXPR:
-      if (node->data.binary.op == TOKEN_ASSIGN) {
-        AstType target_type = emit_lvalue_address(ctx, node->data.binary.left);
-        if (ctx->had_error) {
-          return;
-        }
-        if (target_type.kind == AST_TYPE_ARRAY) {
-          codegen_error(ctx, node, "array value is not assignable");
-          return;
-        }
-
-        emit_push_a0(ctx);
-        emit_expr(ctx, node->data.binary.right);
-        if (ctx->had_error) {
-          return;
-        }
-        if (target_type.kind != AST_TYPE_POINTER && is_array_value_expression(ctx, node->data.binary.right)) {
-          codegen_error(ctx, node, "array value cannot be assigned to a scalar expression");
-          return;
-        }
-        emit_pop_t0(ctx);
-        emit_store_to_address(ctx, target_type);
+      if (is_assignment_operator(node->data.binary.op)) {
+        emit_assignment_expr(ctx, node);
         return;
       }
       emit_expr(ctx, node->data.binary.left);
@@ -413,10 +535,7 @@ void emit_expr(CodegenContext *ctx, const AstNode *node) {
         if (left_ptr && right_scalar) {
           int32_t element_size = type_size(pointer_element_type(left_type));
           emit_pop_t0(ctx);
-          if (element_size > 1) {
-            emit_line(ctx, "  li t1, %d", element_size);
-            emit_line(ctx, "  mul a0, a0, t1");
-          }
+          emit_scale_a0(ctx, element_size);
           if (node->data.binary.op == TOKEN_PLUS) {
             emit_line(ctx, "  add a0, t0, a0");
           } else {
@@ -474,18 +593,6 @@ void emit_expr(CodegenContext *ctx, const AstNode *node) {
       }
       const char *name = node->data.call.callee->data.identifier.name;
       size_t length = node->data.call.callee->data.identifier.length;
-      if (name_is(name, length, "__rars_syscall0", sizeof("__rars_syscall0") - 1)) {
-        emit_rars_syscall(ctx, node, 0);
-        return;
-      }
-      if (name_is(name, length, "__rars_syscall1", sizeof("__rars_syscall1") - 1)) {
-        emit_rars_syscall(ctx, node, 1);
-        return;
-      }
-      if (name_is(name, length, "__rars_syscall2", sizeof("__rars_syscall2") - 1)) {
-        emit_rars_syscall(ctx, node, 2);
-        return;
-      }
       for (size_t i = 0; i < node->data.call.args.count; i++) {
         emit_expr(ctx, node->data.call.args.items[i]);
         if (ctx->had_error) {
@@ -497,7 +604,14 @@ void emit_expr(CodegenContext *ctx, const AstNode *node) {
         emit_pop_t0(ctx);
         emit_line(ctx, "  mv a%zu, t0", i - 1);
       }
-      emit_line(ctx, "  call %.*s", (int32_t) length, name);
+      fprintf(ctx->out, "  call ");
+      const AstFunction *function = codegen_find_function(ctx, name, length);
+      if (function && function->storage == AST_STORAGE_STATIC) {
+        emit_static_label_ref(ctx, function->filename, function->name, function->length);
+      } else {
+        fprintf(ctx->out, "%.*s", (int32_t) length, name);
+      }
+      fprintf(ctx->out, "\n");
       return;
     }
     case AST_NODE_INIT_LIST:

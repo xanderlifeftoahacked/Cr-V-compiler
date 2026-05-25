@@ -40,14 +40,27 @@ static void emit_array_initializer(CodegenContext *ctx, const AstNode *node, con
   size_t initializer_count = 0;
 
   if (node->data.var_decl.initializer) {
-    initializer_count = node->data.var_decl.initializer->data.init_list.elements.count;
+    if (node->data.var_decl.initializer->kind == AST_NODE_STRING_LITERAL) {
+      initializer_count = node->data.var_decl.initializer->data.string_literal.length + 1;
+    } else {
+      initializer_count = node->data.var_decl.initializer->data.init_list.elements.count;
+    }
   }
 
   for (int32_t i = 0; i < count; i++) {
     if ((size_t) i < initializer_count) {
-      emit_expr(ctx, node->data.var_decl.initializer->data.init_list.elements.items[i]);
-      if (ctx->had_error) {
-        return;
+      if (node->data.var_decl.initializer->kind == AST_NODE_STRING_LITERAL) {
+        const AstNode *literal = node->data.var_decl.initializer;
+        unsigned char value = 0;
+        if ((size_t) i < literal->data.string_literal.length) {
+          value = (unsigned char) literal->data.string_literal.value[i];
+        }
+        emit_line(ctx, "  li a0, %u", value);
+      } else {
+        emit_expr(ctx, node->data.var_decl.initializer->data.init_list.elements.items[i]);
+        if (ctx->had_error) {
+          return;
+        }
       }
     } else {
       emit_line(ctx, "  li a0, 0");
@@ -134,9 +147,11 @@ void emit_stmt(CodegenContext *ctx, const AstNode *node) {
       make_label(ctx, "while_head", head_label, sizeof(head_label));
       make_label(ctx, "while_end", end_label, sizeof(end_label));
       break_push(ctx, end_label);
+      continue_push(ctx, head_label);
       emit_line(ctx, "%s:", head_label);
       emit_expr(ctx, node->data.while_stmt.condition);
       if (ctx->had_error) {
+        continue_pop(ctx);
         break_pop(ctx);
         return;
       }
@@ -146,18 +161,23 @@ void emit_stmt(CodegenContext *ctx, const AstNode *node) {
         emit_line(ctx, "  j %s", head_label);
       }
       emit_line(ctx, "%s:", end_label);
+      continue_pop(ctx);
       break_pop(ctx);
       return;
     }
     case AST_NODE_FOR_STMT: {
       char head_label[64];
+      char post_label[64];
       char end_label[64];
       make_label(ctx, "for_head", head_label, sizeof(head_label));
+      make_label(ctx, "for_post", post_label, sizeof(post_label));
       make_label(ctx, "for_end", end_label, sizeof(end_label));
       scope_push(ctx);
       break_push(ctx, end_label);
+      continue_push(ctx, post_label);
       emit_stmt(ctx, node->data.for_stmt.init);
       if (ctx->had_error) {
+        continue_pop(ctx);
         break_pop(ctx);
         scope_pop(ctx);
         return;
@@ -166,6 +186,7 @@ void emit_stmt(CodegenContext *ctx, const AstNode *node) {
       if (node->data.for_stmt.condition) {
         emit_expr(ctx, node->data.for_stmt.condition);
         if (ctx->had_error) {
+          continue_pop(ctx);
           break_pop(ctx);
           scope_pop(ctx);
           return;
@@ -174,38 +195,48 @@ void emit_stmt(CodegenContext *ctx, const AstNode *node) {
       }
       emit_stmt(ctx, node->data.for_stmt.body);
       if (ctx->had_error) {
+        continue_pop(ctx);
         break_pop(ctx);
         scope_pop(ctx);
         return;
       }
+      emit_line(ctx, "%s:", post_label);
       emit_expr(ctx, node->data.for_stmt.post);
       if (!ctx->had_error) {
         emit_line(ctx, "  j %s", head_label);
       }
       emit_line(ctx, "%s:", end_label);
+      continue_pop(ctx);
       break_pop(ctx);
       scope_pop(ctx);
       return;
     }
     case AST_NODE_DO_WHILE_STMT: {
       char head_label[64];
+      char continue_label[64];
       char end_label[64];
       make_label(ctx, "do_head", head_label, sizeof(head_label));
+      make_label(ctx, "do_continue", continue_label, sizeof(continue_label));
       make_label(ctx, "do_end", end_label, sizeof(end_label));
       break_push(ctx, end_label);
+      continue_push(ctx, continue_label);
       emit_line(ctx, "%s:", head_label);
       emit_stmt(ctx, node->data.do_while_stmt.body);
       if (ctx->had_error) {
+        continue_pop(ctx);
         break_pop(ctx);
         return;
       }
+      emit_line(ctx, "%s:", continue_label);
       emit_expr(ctx, node->data.do_while_stmt.condition);
       if (ctx->had_error) {
+        continue_pop(ctx);
         break_pop(ctx);
         return;
       }
       emit_line(ctx, "  bnez a0, %s", head_label);
       emit_line(ctx, "%s:", end_label);
+      continue_pop(ctx);
       break_pop(ctx);
       return;
     }
@@ -270,6 +301,9 @@ void emit_stmt(CodegenContext *ctx, const AstNode *node) {
     }
     case AST_NODE_BREAK_STMT:
       emit_break(ctx, node);
+      return;
+    case AST_NODE_CONTINUE_STMT:
+      emit_continue(ctx, node);
       return;
     case AST_NODE_GOTO_STMT:
       emit_line(ctx, "  j %s", node->data.goto_stmt.label);

@@ -259,6 +259,25 @@ ParseResult parser_parse(Parser *parser) {
   while (!parser_is_at_end(parser)) {
     size_t start = parser->current;
 
+    AstStorageClass storage = AST_STORAGE_NONE;
+    if (parser_match(parser, TOKEN_KW_static)) {
+      storage = AST_STORAGE_STATIC;
+    } else if (parser_match(parser, TOKEN_KW_extern)) {
+      storage = AST_STORAGE_EXTERN;
+    }
+
+    if ((storage == AST_STORAGE_STATIC && parser_check(parser, TOKEN_KW_extern)) ||
+        (storage == AST_STORAGE_EXTERN && parser_check(parser, TOKEN_KW_static))) {
+      parser_error_at(parser, parser_peek(parser), "cannot combine 'static' and 'extern'");
+      parser_sync(parser);
+
+      if (parser->current == start && !parser_is_at_end(parser)) {
+        parser_advance(parser);
+      }
+
+      continue;
+    }
+
     const Token *type_token = parser_peek(parser);
     AstType type;
     if (!parser_parse_type(parser, &type)) {
@@ -292,7 +311,7 @@ ParseResult parser_parse(Parser *parser) {
     }
 
     if (parser_check(parser, TOKEN_LPAREN)) {
-      AstFunction *fn = parse_function_after_header(parser, type, name_tok);
+      AstFunction *fn = parse_function_after_header(parser, type, name_tok, storage);
 
       if (!fn) {
         parser_sync(parser);
@@ -312,7 +331,7 @@ ParseResult parser_parse(Parser *parser) {
       continue;
     }
 
-    AstNode *global = parse_variable_declaration_after_name(parser, type_token, type, name_tok);
+    AstNode *global = parse_variable_declaration_after_name(parser, type_token, type, name_tok, storage);
     if (!global) {
       parser_sync(parser);
 
