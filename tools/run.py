@@ -15,14 +15,14 @@ RARS_RUNTIME = ROOT_DIR / "stdlib/rars.s"
 
 def main() -> int:
     if len(sys.argv) < 2:
-        print(f"usage: {sys.argv[0]} <file.c>", file=sys.stderr)
+        print(f"usage: {sys.argv[0]} <file.c>...", file=sys.stderr)
         return 1
 
-    source = Path(sys.argv[1])
-
-    if not source.is_file():
-        print(f"error: file not found: {source}", file=sys.stderr)
-        return 1
+    sources = [Path(arg) for arg in sys.argv[1:]]
+    for source in sources:
+        if not source.is_file():
+            print(f"error: file not found: {source}", file=sys.stderr)
+            return 1
 
     if not CRV.is_file():
         print(f"error: compiler not found: {CRV} (run: cmake --build build)", file=sys.stderr)
@@ -44,7 +44,7 @@ def main() -> int:
 
     try:
         compile_result = subprocess.run(
-            [str(CRV), str(source)],
+            [str(CRV), *(str(source) for source in sources)],
             stdout=asm_path.open("w"),
             stderr=subprocess.PIPE,
             env=env,
