@@ -5,7 +5,6 @@
 #include "parser/parser.h"
 #include "parser/ast_printer.h"
 #include "codegen/codegen.h"
-#include "compiler/stdlib.h"
 #include "semantic/semantic.h"
 #include "utils/diagnostic.h"
 
@@ -17,8 +16,7 @@ typedef enum {
   TEST_LEX,
   TEST_PARSE,
   TEST_SEMANTIC,
-  TEST_CODEGEN,
-  TEST_CODEGEN_STDLIB
+  TEST_CODEGEN
 } TestStage;
 
 typedef struct {
@@ -87,6 +85,28 @@ static void trim_newlines(char *text) {
   }
 }
 
+static char *read_tmp_text(FILE *tmp) {
+  if (!tmp) {
+    return NULL;
+  }
+  if (fflush(tmp) != 0 || fseek(tmp, 0, SEEK_END) != 0) {
+    return NULL;
+  }
+  long out_size = ftell(tmp);
+  if (out_size < 0) {
+    return NULL;
+  }
+  rewind(tmp);
+
+  char *text = malloc((size_t) out_size + 1);
+  if (!text) {
+    return NULL;
+  }
+  size_t read = fread(text, 1, (size_t) out_size, tmp);
+  text[read] = '\0';
+  return text;
+}
+
 static int run_one(const TestCase *tc) {
   char *path = make_path(tc->path);
   char *source = read_file(path);
@@ -125,7 +145,7 @@ static int run_one(const TestCase *tc) {
     parser_destroy(&parser);
   }
 
-  if (ok && (tc->stage == TEST_CODEGEN || tc->stage == TEST_CODEGEN_STDLIB)) {
+  if (ok && tc->stage == TEST_CODEGEN) {
     Parser parser;
     parser_init(&parser, lexer_get_tokens(&lexer), source, path);
     ParseResult pr = parser_parse(&parser);
@@ -134,39 +154,6 @@ static int run_one(const TestCase *tc) {
     }
 
     const AstModule *module = pr.module;
-    char *stdlib_source = NULL;
-    Lexer stdlib_lexer;
-    Parser stdlib_parser;
-    int stdlib_lexer_ready = 0;
-    int stdlib_parser_ready = 0;
-    AstModule merged_module = {0};
-    int merged_module_ready = 0;
-
-    if (ok && tc->stage == TEST_CODEGEN_STDLIB) {
-      const char *stdlib_path = crv_default_stdlib_path();
-      stdlib_source = read_file(stdlib_path);
-      if (!stdlib_source) {
-        ok = 0;
-      } else {
-        lexer_init(&stdlib_lexer, stdlib_source, stdlib_path);
-        stdlib_lexer_ready = 1;
-        lexer_tokenize(&stdlib_lexer);
-        if (lexer_had_error(&stdlib_lexer)) {
-          ok = 0;
-        }
-      }
-      if (ok) {
-        parser_init(&stdlib_parser, lexer_get_tokens(&stdlib_lexer), stdlib_source, stdlib_path);
-        stdlib_parser_ready = 1;
-        ParseResult stdlib_pr = parser_parse(&stdlib_parser);
-        if (stdlib_pr.had_error || crv_merge_modules(&merged_module, stdlib_pr.module, pr.module) != 0) {
-          ok = 0;
-        } else {
-          merged_module_ready = 1;
-          module = &merged_module;
-        }
-      }
-    }
 
     if (ok && semantic_analyze(module, path) != 0) {
       ok = 0;
@@ -178,16 +165,10 @@ static int run_one(const TestCase *tc) {
       } else {
         ok = codegen_emit_module(tmp, module, path) == 0;
         if (ok) {
-          rewind(tmp);
-          fseek(tmp, 0, SEEK_END);
-          long out_size = ftell(tmp);
-          rewind(tmp);
-          char *out_text = malloc((size_t) out_size + 1);
+          char *out_text = read_tmp_text(tmp);
           if (!out_text) {
             ok = 0;
           } else {
-            fread(out_text, 1, (size_t) out_size, tmp);
-            out_text[out_size] = '\0';
             char *expected_rel = make_expected_path(tc->path);
             char *expected_path = make_path(expected_rel);
             char *expected_text = read_file(expected_path);
@@ -195,6 +176,23 @@ static int run_one(const TestCase *tc) {
             trim_newlines(expected_text);
             if (!expected_text || strcmp(out_text, expected_text) != 0) {
               ok = 0;
+            }
+            if (ok) {
+              FILE *second = tmpfile();
+              if (!second) {
+                ok = 0;
+              } else {
+                ok = codegen_emit_module(second, module, path) == 0;
+                if (ok) {
+                  char *second_text = read_tmp_text(second);
+                  trim_newlines(second_text);
+                  if (!second_text || strcmp(second_text, expected_text) != 0) {
+                    ok = 0;
+                  }
+                  free(second_text);
+                }
+                fclose(second);
+              }
             }
             free(expected_text);
             free(expected_path);
@@ -205,16 +203,6 @@ static int run_one(const TestCase *tc) {
         }
       }
     }
-    if (merged_module_ready) {
-      crv_free_merged_module(&merged_module);
-    }
-    if (stdlib_parser_ready) {
-      parser_destroy(&stdlib_parser);
-    }
-    if (stdlib_lexer_ready) {
-      lexer_destroy(&stdlib_lexer);
-    }
-    free(stdlib_source);
     parser_destroy(&parser);
   }
 
@@ -241,10 +229,16 @@ int main(void) {
     {"parser/valid/control_flow.c", 1, TEST_PARSE},
     {"parser/valid/goto_with_label.c", 1, TEST_PARSE},
     {"parser/valid/pointers.c", 1, TEST_PARSE},
+    {"parser/valid/storage_classes.c", 1, TEST_PARSE},
+    {"parser/valid/shift_xor_ops.c", 1, TEST_PARSE},
+    {"parser/valid/string_literals.c", 1, TEST_PARSE},
+    {"parser/valid/update_compound_continue.c", 1, TEST_PARSE},
 
     {"parser/invalid/empty_translation_unit.c", 0, TEST_PARSE},
     {"parser/invalid/trailing_comma_initializer.c", 0, TEST_PARSE},
     {"parser/invalid/struct_not_supported.c", 0, TEST_PARSE},
+    {"parser/invalid/extern_initializer.c", 0, TEST_PARSE},
+    {"parser/invalid/conflicting_storage.c", 0, TEST_PARSE},
     {"parser/invalid/case_outside_switch.c", 0, TEST_PARSE},
     {"parser/invalid/duplicate_case.c", 0, TEST_SEMANTIC},
     {"parser/invalid/duplicate_default.c", 0, TEST_SEMANTIC},
@@ -254,14 +248,19 @@ int main(void) {
 
     {"semantic/valid/basic_semantic_ok.c", 1, TEST_SEMANTIC},
     {"semantic/valid/pointer_arithmetic.c", 1, TEST_SEMANTIC},
+    {"semantic/valid/function_prototype_call.c", 1, TEST_SEMANTIC},
+    {"semantic/valid/extern_global_definition.c", 1, TEST_SEMANTIC},
 
     {"semantic/invalid/undeclared_identifier.c", 0, TEST_SEMANTIC},
     {"semantic/invalid/unknown_function_call.c", 0, TEST_SEMANTIC},
     {"semantic/invalid/duplicate_param.c", 0, TEST_SEMANTIC},
     {"semantic/invalid/duplicate_local_same_scope.c", 0, TEST_SEMANTIC},
     {"semantic/invalid/break_outside_loop.c", 0, TEST_SEMANTIC},
+    {"semantic/invalid/continue_outside_loop.c", 0, TEST_SEMANTIC},
     {"semantic/invalid/call_arity_mismatch.c", 0, TEST_SEMANTIC},
     {"semantic/invalid/non_lvalue_assignment.c", 0, TEST_SEMANTIC},
+    {"semantic/invalid/update_non_lvalue.c", 0, TEST_SEMANTIC},
+    {"semantic/invalid/compound_pointer_to_scalar.c", 0, TEST_SEMANTIC},
     {"semantic/invalid/scalar_init_list.c", 0, TEST_SEMANTIC},
     {"semantic/invalid/zero_length_array.c", 0, TEST_SEMANTIC},
     {"semantic/invalid/array_scalar_initializer.c", 0, TEST_SEMANTIC},
@@ -279,6 +278,10 @@ int main(void) {
     {"semantic/invalid/deref_non_pointer.c", 0, TEST_SEMANTIC},
     {"semantic/invalid/address_of_non_lvalue.c", 0, TEST_SEMANTIC},
     {"semantic/invalid/pointer_add_two_pointers.c", 0, TEST_SEMANTIC},
+    {"semantic/invalid/prototype_arity_mismatch.c", 0, TEST_SEMANTIC},
+    {"semantic/invalid/static_duplicate_same_file.c", 0, TEST_SEMANTIC},
+    {"semantic/invalid/static_function_linkage_mismatch.c", 0, TEST_SEMANTIC},
+    {"semantic/invalid/string_initializer_too_long.c", 0, TEST_SEMANTIC},
 
     {"codegen/valid/simple_main.c", 1, TEST_CODEGEN},
     {"codegen/valid/goto_with_label.c", 1, TEST_CODEGEN},
@@ -289,7 +292,10 @@ int main(void) {
     {"codegen/valid/char_arrays.c", 1, TEST_CODEGEN},
     {"codegen/valid/pointers.c", 1, TEST_CODEGEN},
     {"codegen/valid/pointer_arithmetic.c", 1, TEST_CODEGEN},
-    {"codegen/valid/stdlib_print_int.c", 1, TEST_CODEGEN_STDLIB},
+    {"codegen/valid/static_symbols.c", 1, TEST_CODEGEN},
+    {"codegen/valid/string_literals.c", 1, TEST_CODEGEN},
+    {"codegen/valid/update_compound_continue.c", 1, TEST_CODEGEN},
+    {"codegen/valid/stdlib_print_int.c", 1, TEST_CODEGEN},
   };
 
   int passed = 0;

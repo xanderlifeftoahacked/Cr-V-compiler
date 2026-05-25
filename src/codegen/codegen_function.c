@@ -1,9 +1,22 @@
 #include "codegen_internal.h"
 
+#include <stdio.h>
 #include <string.h>
 
 void emit_function(CodegenContext *ctx, const AstFunction *function) {
-  ctx->function_name = function->name;
+  if (!function->body) {
+    return;
+  }
+
+  char static_function_label[128];
+  if (function->storage == AST_STORAGE_STATIC) {
+    format_static_label(ctx, static_function_label, sizeof(static_function_label), function->filename, function->name,
+                        function->length);
+    ctx->function_name = static_function_label;
+  } else {
+    ctx->function_name = function->name;
+  }
+  ctx->current_file = function->filename;
   ctx->label_seq = 0;
   ctx->next_local_offset = 8;
   ctx->break_stack = NULL;
@@ -44,8 +57,12 @@ void emit_function(CodegenContext *ctx, const AstFunction *function) {
   }
 
   ctx->frame_size = align16(measured_bytes);
-  emit_line(ctx, ".globl %s", function->name);
-  emit_line(ctx, "%s:", function->name);
+  if (function->storage != AST_STORAGE_STATIC) {
+    emit_line(ctx, ".globl %s", function->name);
+    emit_line(ctx, "%s:", function->name);
+  } else {
+    emit_line(ctx, "%s:", ctx->function_name);
+  }
   emit_line(ctx, "  addi sp, sp, -%d", ctx->frame_size);
   emit_line(ctx, "  sw s0, %d(sp)", ctx->frame_size - 4);
   emit_line(ctx, "  sw ra, %d(sp)", ctx->frame_size - 8);
@@ -63,13 +80,12 @@ void emit_function(CodegenContext *ctx, const AstFunction *function) {
   emit_stmt(ctx, function->body);
   if (!ctx->had_error) {
     emit_line(ctx, "  li a0, 0");
-    emit_line(ctx, "%s_epilogue:", function->name);
+    emit_line(ctx, "%s_epilogue:", ctx->function_name);
     emit_line(ctx, "  lw ra, -8(s0)");
     emit_line(ctx, "  lw s0, -4(s0)");
     emit_line(ctx, "  addi sp, sp, %d", ctx->frame_size);
     if (strcmp(function->name, "main") == 0) {
-      emit_line(ctx, "  li a7, 10");
-      emit_line(ctx, "  ecall");
+      emit_line(ctx, "  call rars_exit2");
     } else {
       emit_line(ctx, "  ret");
     }

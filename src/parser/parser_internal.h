@@ -26,10 +26,11 @@ void parser_sync(Parser *parser);
 int32_t parser_parse_type(Parser *parser, AstType *type);
 int32_t parser_parse_pointer_prefix(Parser *parser, AstType *type);
 AstFunction *parse_function(Parser *parser);
-AstFunction *parse_function_after_header(Parser *parser, AstType return_type, const Token *name_tok);
+AstFunction *parse_function_after_header(Parser *parser, AstType return_type, const Token *name_tok,
+                                         AstStorageClass storage);
 AstNode *parse_variable_declaration(Parser *parser, const Token *type_token, AstType type);
 AstNode *parse_variable_declaration_after_name(Parser *parser, const Token *type_token, AstType type,
-                                               const Token *name_tok);
+                                               const Token *name_tok, AstStorageClass storage);
 AstNode *parse_block(Parser *parser);
 AstNode *parse_statement(Parser *parser);
 AstNode *parse_expression(Parser *parser);

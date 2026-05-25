@@ -7,7 +7,7 @@ int main() {
     flags[1] = flags[0] + flags[2];
     total = xs[2] + flags[1];
 
-    print_int(total);
-    putchar('\n');
+    rars_print_int(total);
+    rars_print_char('\n');
     return 0;
 }

@@ -1,14 +1,18 @@
 #include "parser_internal.h"
 
+#include <string.h>
+
 static AstNode *parse_assignment(Parser *parser);
 static AstNode *parse_left_associative(Parser *parser, AstNode *(*next)(Parser *), const TokenKind *ops,
                                        size_t op_count);
 static AstNode *parse_logical_or(Parser *parser);
 static AstNode *parse_logical_and(Parser *parser);
 static AstNode *parse_bitwise_or(Parser *parser);
+static AstNode *parse_bitwise_xor(Parser *parser);
 static AstNode *parse_bitwise_and(Parser *parser);
 static AstNode *parse_equality(Parser *parser);
 static AstNode *parse_relational(Parser *parser);
+static AstNode *parse_shift(Parser *parser);
 static AstNode *parse_additive(Parser *parser);
 static AstNode *parse_multiplicative(Parser *parser);
 static AstNode *parse_unary(Parser *parser);
@@ -23,10 +27,30 @@ static AstNode *make_binary(Parser *parser, TokenKind op, const Token *token, As
   return node;
 }
 
-static AstNode *make_unary(Parser *parser, TokenKind op, const Token *token, AstNode *operand) {
+static int32_t is_assignment_operator(TokenKind kind) {
+  switch (kind) {
+    case TOKEN_ASSIGN:
+    case TOKEN_PLUS_ASSIGN:
+    case TOKEN_MINUS_ASSIGN:
+    case TOKEN_STAR_ASSIGN:
+    case TOKEN_DIV_ASSIGN:
+    case TOKEN_MOD_ASSIGN:
+    case TOKEN_AMPERSAND_ASSIGN:
+    case TOKEN_PIPE_ASSIGN:
+    case TOKEN_CARET_ASSIGN:
+    case TOKEN_LSHIFT_ASSIGN:
+    case TOKEN_RSHIFT_ASSIGN:
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+static AstNode *make_unary(Parser *parser, TokenKind op, const Token *token, AstNode *operand, int32_t is_postfix) {
   AstNode *node = parser_new_node(parser, AST_NODE_UNARY_EXPR, token);
   node->data.unary.op = op;
   node->data.unary.operand = operand;
+  node->data.unary.is_postfix = is_postfix;
   return node;
 }
 
@@ -43,6 +67,17 @@ static AstNode *make_identifier(Parser *parser, const Token *token) {
   return node;
 }
 
+static AstNode *make_string_literal(Parser *parser, const Token *token) {
+  AstNode *node = parser_new_node(parser, AST_NODE_STRING_LITERAL, token);
+  node->data.string_literal.value = parser_alloc(parser, token->string_length + 1);
+  if (token->string_length > 0) {
+    memcpy(node->data.string_literal.value, token->value.string_value, token->string_length);
+  }
+  node->data.string_literal.value[token->string_length] = '\0';
+  node->data.string_literal.length = token->string_length;
+  return node;
+}
+
 AstNode *parse_expression(Parser *parser) {
   return parse_assignment(parser);
 }
@@ -50,10 +85,11 @@ AstNode *parse_expression(Parser *parser) {
 static AstNode *parse_assignment(Parser *parser) {
   AstNode *left = parse_logical_or(parser);
 
-  if (parser_match(parser, TOKEN_ASSIGN)) {
+  if (is_assignment_operator(parser_peek(parser)->kind)) {
+    parser_advance(parser);
     const Token *op = parser_previous(parser);
     AstNode *right = parse_assignment(parser);
-    return make_binary(parser, TOKEN_ASSIGN, op, left, right);
+    return make_binary(parser, op->kind, op, left, right);
   }
 
   return left;
@@ -97,6 +133,11 @@ static AstNode *parse_left_associative(Parser *parser, AstNode *(*next)(Parser *
 
 static AstNode *parse_bitwise_or(Parser *parser) {
   const TokenKind ops[] = {TOKEN_PIPE};
+  return parse_left_associative(parser, parse_bitwise_xor, ops, 1);
+}
+
+static AstNode *parse_bitwise_xor(Parser *parser) {
+  const TokenKind ops[] = {TOKEN_CARET};
   return parse_left_associative(parser, parse_bitwise_and, ops, 1);
 }
 
@@ -112,7 +153,12 @@ static AstNode *parse_equality(Parser *parser) {
 
 static AstNode *parse_relational(Parser *parser) {
   const TokenKind ops[] = {TOKEN_LESS, TOKEN_LESS_EQUAL, TOKEN_GREATER, TOKEN_GREATER_EQUAL};
-  return parse_left_associative(parser, parse_additive, ops, 4);
+  return parse_left_associative(parser, parse_shift, ops, 4);
+}
+
+static AstNode *parse_shift(Parser *parser) {
+  const TokenKind ops[] = {TOKEN_LSHIFT, TOKEN_RSHIFT};
+  return parse_left_associative(parser, parse_additive, ops, 2);
 }
 
 static AstNode *parse_additive(Parser *parser) {
@@ -126,12 +172,18 @@ static AstNode *parse_multiplicative(Parser *parser) {
 }
 
 static AstNode *parse_unary(Parser *parser) {
+  if (parser_match(parser, TOKEN_PLUS_PLUS) || parser_match(parser, TOKEN_MINUS_MINUS)) {
+    const Token *op = parser_previous(parser);
+    AstNode *operand = parse_unary(parser);
+    return make_unary(parser, op->kind, op, operand, 0);
+  }
+
   if (parser_match(parser, TOKEN_MINUS) || parser_match(parser, TOKEN_PLUS) || parser_match(parser, TOKEN_EXCLAIM) ||
       parser_match(parser, TOKEN_TILDE) || parser_match(parser, TOKEN_STAR) || parser_match(parser, TOKEN_AMPERSAND)) {
     const Token *op = parser_previous(parser);
     AstNode *operand = parse_unary(parser);
 
-    return make_unary(parser, op->kind, op, operand);
+    return make_unary(parser, op->kind, op, operand, 0);
   }
 
   return parse_postfix(parser);
@@ -191,6 +243,12 @@ static AstNode *parse_postfix(Parser *parser) {
       continue;
     }
 
+    if (parser_match(parser, TOKEN_PLUS_PLUS) || parser_match(parser, TOKEN_MINUS_MINUS)) {
+      const Token *op = parser_previous(parser);
+      expr = make_unary(parser, op->kind, op, expr, 1);
+      continue;
+    }
+
     break;
   }
 
@@ -220,7 +278,7 @@ static AstNode *parse_primary(Parser *parser) {
   }
 
   if (parser_match(parser, TOKEN_STRING_LITERAL)) {
-    parser_error_at(parser, parser_previous(parser), "string literals are currently not supported");
+    return make_string_literal(parser, parser_previous(parser));
   } else {
     parser_error_at(parser, parser_peek(parser), "expected expression");
 

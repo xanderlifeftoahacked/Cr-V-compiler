@@ -27,7 +27,7 @@ main_for_head_0:
   lw t0, 0(sp)
   addi sp, sp, 4
   slt a0, t0, a0
-  beqz a0, main_for_end_1
+  beqz a0, main_for_end_2
   addi a0, s0, -16
   addi sp, sp, -4
   sw a0, 0(sp)
@@ -43,6 +43,7 @@ main_for_head_0:
   lw t0, 0(sp)
   addi sp, sp, 4
   sw a0, 0(t0)
+main_for_post_1:
   addi a0, s0, -12
   addi sp, sp, -4
   sw a0, 0(sp)
@@ -58,8 +59,8 @@ main_for_head_0:
   addi sp, sp, 4
   sw a0, 0(t0)
   j main_for_head_0
-main_for_end_1:
-main_do_head_2:
+main_for_end_2:
+main_do_head_3:
   addi a0, s0, -16
   addi sp, sp, -4
   sw a0, 0(sp)
@@ -74,6 +75,7 @@ main_do_head_2:
   lw t0, 0(sp)
   addi sp, sp, 4
   sw a0, 0(t0)
+main_do_continue_4:
   addi a0, s0, -16
   lw a0, 0(a0)
   addi sp, sp, -4
@@ -82,19 +84,19 @@ main_do_head_2:
   lw t0, 0(sp)
   addi sp, sp, 4
   slt a0, a0, t0
-  bnez a0, main_do_head_2
-main_do_end_3:
+  bnez a0, main_do_head_3
+main_do_end_5:
   addi a0, s0, -16
   lw a0, 0(a0)
   mv t0, a0
   li t1, 3
-  beq t0, t1, main_case_5
-  j main_default_6
-main_case_5:
-  j main_switch_end_4
-main_default_6:
-  j main_switch_end_4
-main_switch_end_4:
+  beq t0, t1, main_case_7
+  j main_default_8
+main_case_7:
+  j main_switch_end_6
+main_default_8:
+  j main_switch_end_6
+main_switch_end_6:
   j done
 done:
   addi a0, s0, -16
@@ -105,5 +107,4 @@ main_epilogue:
   lw ra, -8(s0)
   lw s0, -4(s0)
   addi sp, sp, 16
-  li a7, 10
-  ecall
+  call rars_exit2

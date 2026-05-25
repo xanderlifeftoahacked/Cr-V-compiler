@@ -39,7 +39,7 @@ int main() {
     int s3 = sum_slice(xs, 5);
     int dp = dot_product(xs, ys, 5);
 
-    print_int(d + s1 + s2 + s3 + dp);
-    putchar('\n');
+    rars_print_int(d + s1 + s2 + s3 + dp);
+    rars_print_char('\n');
     return 0;
 }

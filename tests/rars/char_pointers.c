@@ -5,7 +5,7 @@ int main() {
     *p = 'A';
     p[2] = p[0] + 2;
 
-    print_int(text[0] + text[1] + text[2]);
-    putchar('\n');
+    rars_print_int(text[0] + text[1] + text[2]);
+    rars_print_char('\n');
     return 0;
 }

@@ -42,6 +42,7 @@ INLINE Token token_create(const TokenKind kind, const char *start, const size_t 
     .length = length,
     .line = line,
     .column = column,
+    .string_length = 0,
     .value = {.int_value = 0}
   };
   return token;

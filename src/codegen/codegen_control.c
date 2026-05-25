@@ -28,6 +28,30 @@ const char *break_top(const CodegenContext *ctx) {
   return ctx->break_stack ? ctx->break_stack->label : NULL;
 }
 
+BreakTarget *continue_push(CodegenContext *ctx, const char *label) {
+  BreakTarget *target = malloc(sizeof(BreakTarget));
+  if (!target) {
+    LOG(FATAL, "out of memory");
+  }
+  snprintf(target->label, sizeof(target->label), "%s", label);
+  target->next = ctx->continue_stack;
+  ctx->continue_stack = target;
+  return target;
+}
+
+void continue_pop(CodegenContext *ctx) {
+  BreakTarget *target = ctx->continue_stack;
+  if (!target) {
+    return;
+  }
+  ctx->continue_stack = target->next;
+  free(target);
+}
+
+const char *continue_top(const CodegenContext *ctx) {
+  return ctx->continue_stack ? ctx->continue_stack->label : NULL;
+}
+
 SwitchContext *switch_push(CodegenContext *ctx) {
   SwitchContext *sw = malloc(sizeof(SwitchContext));
   if (!sw) {
@@ -161,3 +185,11 @@ void emit_break(CodegenContext *ctx, const AstNode *node) {
   emit_line(ctx, "  j %s", label);
 }
 
+void emit_continue(CodegenContext *ctx, const AstNode *node) {
+  const char *label = continue_top(ctx);
+  if (!label) {
+    codegen_error(ctx, node, "'continue' not within loop");
+    return;
+  }
+  emit_line(ctx, "  j %s", label);
+}

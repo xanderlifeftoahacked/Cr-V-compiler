@@ -45,12 +45,44 @@ static AstType pointer_type_to(AstType type) {
   return pointer;
 }
 
+static AstType char_pointer_type(void) {
+  AstType pointer = {
+      .kind = AST_TYPE_POINTER,
+      .element_kind = AST_TYPE_CHAR,
+      .array_size = 0,
+  };
+  return pointer;
+}
+
 static AstType pointed_type(AstType type) {
   return scalar_type(type.element_kind);
 }
 
 static int32_t is_scalar_type(AstType type) {
   return type.kind == AST_TYPE_INT || type.kind == AST_TYPE_CHAR;
+}
+
+static int32_t is_assignment_operator(TokenKind op) {
+  switch (op) {
+    case TOKEN_ASSIGN:
+    case TOKEN_PLUS_ASSIGN:
+    case TOKEN_MINUS_ASSIGN:
+    case TOKEN_STAR_ASSIGN:
+    case TOKEN_DIV_ASSIGN:
+    case TOKEN_MOD_ASSIGN:
+    case TOKEN_AMPERSAND_ASSIGN:
+    case TOKEN_PIPE_ASSIGN:
+    case TOKEN_CARET_ASSIGN:
+    case TOKEN_LSHIFT_ASSIGN:
+    case TOKEN_RSHIFT_ASSIGN:
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+static int32_t is_update_operator(TokenKind op) {
+  return op == TOKEN_PLUS_PLUS || op == TOKEN_MINUS_MINUS;
 }
 
 static void validate_builtin_call(SemanticContext *ctx, const AstNode *node, const BuiltinFunction *builtin) {
@@ -90,6 +122,28 @@ static void validate_function_call(SemanticContext *ctx, const AstNode *node, co
   }
 }
 
+static int32_t symbol_blocks_function_call(const SemanticContext *ctx, const Symbol *symbol,
+                                           const FunctionSymbol *function) {
+  if (!symbol) {
+    return 0;
+  }
+
+  if (symbol->storage == AST_STORAGE_NONE && !symbol->filename) {
+    return 1;
+  }
+
+  if (symbol->storage == AST_STORAGE_STATIC) {
+    return symbol->filename && ctx->current_file && strcmp(symbol->filename, ctx->current_file) == 0;
+  }
+
+  if (symbol->filename && ctx->current_file && strcmp(symbol->filename, ctx->current_file) != 0 && function) {
+    return 0;
+  }
+
+  return !(function && function->storage == AST_STORAGE_STATIC && function->filename && ctx->current_file &&
+           strcmp(function->filename, ctx->current_file) == 0);
+}
+
 static void analyze_call(SemanticContext *ctx, const AstNode *node) {
   const AstNode *callee = node->data.call.callee;
 
@@ -102,12 +156,13 @@ static void analyze_call(SemanticContext *ctx, const AstNode *node) {
   const char *name = callee->data.identifier.name;
   size_t length = callee->data.identifier.length;
 
-  if (sem_scope_find(ctx, name, length)) {
+  const Symbol *symbol = sem_scope_find(ctx, name, length);
+  const FunctionSymbol *function = function_find(ctx, name, length);
+  if (symbol_blocks_function_call(ctx, symbol, function)) {
     semantic_error(ctx, callee, "'%s' is a variable, not a function", name);
     goto analyze_args;
   }
 
-  const FunctionSymbol *function = function_find(ctx, name, length);
   if (function) {
     validate_function_call(ctx, node, function);
     goto analyze_args;
@@ -138,23 +193,42 @@ static void analyze_block(SemanticContext *ctx, const AstNode *node) {
 }
 
 static void validate_var_decl_initializer(SemanticContext *ctx, const AstNode *node) {
-  if (node->data.var_decl.type.kind == AST_TYPE_ARRAY && node->data.var_decl.type.array_size <= 0) {
+  const AstNode *initializer = node->data.var_decl.initializer;
+  AstType type = node->data.var_decl.type;
+
+  if (initializer && initializer->kind == AST_NODE_STRING_LITERAL) {
+    int32_t is_char_array = type.kind == AST_TYPE_ARRAY && type.element_kind == AST_TYPE_CHAR;
+    int32_t is_char_pointer = type.kind == AST_TYPE_POINTER && type.element_kind == AST_TYPE_CHAR;
+
+    if (is_char_array) {
+      if ((int32_t) initializer->data.string_literal.length + 1 > type.array_size) {
+        semantic_error(ctx, node, "string initializer for array '%s' is too long", node->data.var_decl.name);
+      }
+      return;
+    }
+
+    if (is_char_pointer) {
+      return;
+    }
+
+    semantic_error(ctx, node, "string initializer requires char array or char pointer");
+    return;
+  }
+
+  if (type.kind == AST_TYPE_ARRAY && type.array_size <= 0) {
     semantic_error(ctx, node, "array '%s' must have positive size", node->data.var_decl.name);
   }
 
-  if (node->data.var_decl.type.kind == AST_TYPE_ARRAY && node->data.var_decl.initializer &&
-      node->data.var_decl.initializer->kind != AST_NODE_INIT_LIST) {
+  if (type.kind == AST_TYPE_ARRAY && initializer && initializer->kind != AST_NODE_INIT_LIST) {
     semantic_error(ctx, node, "array '%s' must be initialized with initializer list", node->data.var_decl.name);
   }
 
-  if (node->data.var_decl.type.kind == AST_TYPE_ARRAY && node->data.var_decl.initializer &&
-      node->data.var_decl.initializer->kind == AST_NODE_INIT_LIST &&
-      (int32_t) node->data.var_decl.initializer->data.init_list.elements.count > node->data.var_decl.type.array_size) {
+  if (type.kind == AST_TYPE_ARRAY && initializer && initializer->kind == AST_NODE_INIT_LIST &&
+      (int32_t) initializer->data.init_list.elements.count > type.array_size) {
     semantic_error(ctx, node, "array '%s' initializer has too many elements", node->data.var_decl.name);
   }
 
-  if (node->data.var_decl.type.kind != AST_TYPE_ARRAY && node->data.var_decl.initializer &&
-      node->data.var_decl.initializer->kind == AST_NODE_INIT_LIST) {
+  if (type.kind != AST_TYPE_ARRAY && initializer && initializer->kind == AST_NODE_INIT_LIST) {
     semantic_error(ctx, node, "scalar '%s' cannot be initialized with initializer list", node->data.var_decl.name);
   }
 }
@@ -216,6 +290,9 @@ static AstType expression_type(const SemanticContext *ctx, const AstNode *node) 
       if (node->data.unary.op == TOKEN_AMPERSAND) {
         return pointer_type_to(expression_type(ctx, node->data.unary.operand));
       }
+      if (is_update_operator(node->data.unary.op)) {
+        return expression_type(ctx, node->data.unary.operand);
+      }
       return fallback;
     case AST_NODE_CALL_EXPR:
       if (node->data.call.callee && node->data.call.callee->kind == AST_NODE_IDENTIFIER) {
@@ -225,7 +302,13 @@ static AstType expression_type(const SemanticContext *ctx, const AstNode *node) 
         return function ? function->function->return_type : fallback;
       }
       return fallback;
+    case AST_NODE_STRING_LITERAL:
+      return char_pointer_type();
     case AST_NODE_BINARY_EXPR: {
+      if (is_assignment_operator(node->data.binary.op)) {
+        return expression_type(ctx, node->data.binary.left);
+      }
+
       AstType left_type = expression_type(ctx, node->data.binary.left);
       AstType right_type = expression_type(ctx, node->data.binary.right);
       int32_t left_ptr = left_type.kind == AST_TYPE_POINTER;
@@ -380,6 +463,13 @@ static void analyze_node(SemanticContext *ctx, const AstNode *node) {
 
       return;
 
+    case AST_NODE_CONTINUE_STMT:
+      if (ctx->loop_depth <= 0) {
+        semantic_error(ctx, node, "'continue' not within loop");
+      }
+
+      return;
+
     case AST_NODE_GOTO_STMT:
       goto_add(ctx, node, node->data.goto_stmt.label, node->data.goto_stmt.length);
       return;
@@ -390,21 +480,47 @@ static void analyze_node(SemanticContext *ctx, const AstNode *node) {
       return;
 
     case AST_NODE_BINARY_EXPR:
-      if (node->data.binary.op == TOKEN_ASSIGN && !is_assignable_node(node->data.binary.left)) {
+      if (is_assignment_operator(node->data.binary.op) && !is_assignable_node(node->data.binary.left)) {
         semantic_error(ctx, node, "left side of assignment must be assignable");
       }
 
-      if (node->data.binary.op == TOKEN_ASSIGN && is_array_identifier(ctx, node->data.binary.left)) {
+      if (is_assignment_operator(node->data.binary.op) && is_array_identifier(ctx, node->data.binary.left)) {
         semantic_error(ctx, node, "array '%s' is not assignable", node->data.binary.left->data.identifier.name);
       }
 
       analyze_node(ctx, node->data.binary.left);
       analyze_node(ctx, node->data.binary.right);
 
-      if (node->data.binary.op == TOKEN_ASSIGN) {
+      if (is_assignment_operator(node->data.binary.op)) {
         AstType left_type = expression_type(ctx, node->data.binary.left);
-        if (left_type.kind != AST_TYPE_POINTER && is_array_value_expression(ctx, node->data.binary.right)) {
+        AstType right_type = expression_type(ctx, node->data.binary.right);
+
+        if (node->data.binary.op == TOKEN_ASSIGN && left_type.kind != AST_TYPE_POINTER &&
+            is_array_value_expression(ctx, node->data.binary.right)) {
           semantic_error(ctx, node, "array value cannot be assigned to a scalar expression");
+        }
+
+        if (node->data.binary.op != TOKEN_ASSIGN) {
+          int32_t right_is_array_value = is_array_value_expression(ctx, node->data.binary.right);
+          if (right_is_array_value) {
+            semantic_error(ctx, node, "array value cannot be used in compound assignment");
+          }
+
+          int32_t left_ptr = left_type.kind == AST_TYPE_POINTER;
+          int32_t right_ptr = right_type.kind == AST_TYPE_POINTER;
+          int32_t right_scalar = is_scalar_type(right_type);
+
+          if (!right_is_array_value) {
+            if (node->data.binary.op == TOKEN_PLUS_ASSIGN || node->data.binary.op == TOKEN_MINUS_ASSIGN) {
+              if (left_ptr && !right_scalar) {
+                semantic_error(ctx, node, "pointer compound assignment requires scalar right operand");
+              } else if (!left_ptr && right_ptr) {
+                semantic_error(ctx, node, "cannot assign pointer arithmetic result to scalar expression");
+              }
+            } else if (left_ptr || right_ptr) {
+              semantic_error(ctx, node, "invalid operands to compound assignment");
+            }
+          }
         }
       } else {
         if (node->data.binary.op == TOKEN_PLUS || node->data.binary.op == TOKEN_MINUS) {
@@ -436,6 +552,28 @@ static void analyze_node(SemanticContext *ctx, const AstNode *node) {
       return;
 
     case AST_NODE_UNARY_EXPR:
+      if (is_update_operator(node->data.unary.op)) {
+        if (!is_assignable_node(node->data.unary.operand)) {
+          semantic_error(ctx, node, "operand of '%s' must be assignable",
+                         node->data.unary.op == TOKEN_PLUS_PLUS ? "++" : "--");
+        }
+
+        int32_t operand_is_array_identifier = is_array_identifier(ctx, node->data.unary.operand);
+        if (operand_is_array_identifier) {
+          semantic_error(ctx, node, "array '%s' is not assignable",
+                         node->data.unary.operand->data.identifier.name);
+        }
+
+        analyze_node(ctx, node->data.unary.operand);
+
+        AstType operand_type = expression_type(ctx, node->data.unary.operand);
+        if (!operand_is_array_identifier && operand_type.kind == AST_TYPE_ARRAY) {
+          semantic_error(ctx, node, "array value is not assignable");
+        }
+
+        return;
+      }
+
       if (node->data.unary.op == TOKEN_AMPERSAND && !is_assignable_node(node->data.unary.operand)) {
         semantic_error(ctx, node, "address-of operand must be assignable");
       }
@@ -454,6 +592,9 @@ static void analyze_node(SemanticContext *ctx, const AstNode *node) {
       return;
 
     case AST_NODE_INT_LITERAL:
+      return;
+
+    case AST_NODE_STRING_LITERAL:
       return;
 
     case AST_NODE_IDENTIFIER:
@@ -495,12 +636,17 @@ static void analyze_node(SemanticContext *ctx, const AstNode *node) {
 }
 
 static void analyze_function(SemanticContext *ctx, const AstFunction *function) {
+  if (!function->body) {
+    return;
+  }
+
   labels_destroy(ctx);
   gotos_destroy(ctx);
 
   ctx->loop_depth = 0;
   ctx->switch_depth = 0;
   ctx->current_return_type = function->return_type;
+  ctx->current_file = function->filename;
 
   sem_scope_push(ctx);
 
@@ -532,7 +678,8 @@ int32_t semantic_analyze(const AstModule *module, const char *filename) {
                          .switch_stack = NULL,
                          .loop_depth = 0,
                          .switch_depth = 0,
-                         .current_return_type = {.kind = AST_TYPE_INT, .element_kind = AST_TYPE_INT, .array_size = 0}};
+                         .current_return_type = {.kind = AST_TYPE_INT, .element_kind = AST_TYPE_INT, .array_size = 0},
+                         .current_file = NULL};
 
   sem_scope_push(&ctx);
 
@@ -542,13 +689,15 @@ int32_t semantic_analyze(const AstModule *module, const char *filename) {
       continue;
     }
 
-    if (!sem_scope_declare_current(&ctx, global->data.var_decl.name, global->data.var_decl.length,
-                                   global->data.var_decl.type)) {
+    if (!sem_scope_declare_global(&ctx, global)) {
       semantic_error(&ctx, global, "duplicate global declaration '%s'", global->data.var_decl.name);
     }
 
-    validate_var_decl_initializer(&ctx, global);
-    analyze_node(&ctx, global->data.var_decl.initializer);
+    if (global->data.var_decl.storage != AST_STORAGE_EXTERN) {
+      ctx.current_file = global->data.var_decl.filename;
+      validate_var_decl_initializer(&ctx, global);
+      analyze_node(&ctx, global->data.var_decl.initializer);
+    }
   }
 
   for (size_t i = 0; i < module->functions.count; i++) {

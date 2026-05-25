@@ -17,6 +17,7 @@ typedef struct {
   size_t length;
   int32_t line;
   int32_t column;
+  size_t string_length;
 
   union {
     int32_t int_value;

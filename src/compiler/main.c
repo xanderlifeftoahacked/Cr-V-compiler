@@ -1,6 +1,5 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 
 #include "codegen/codegen.h"
 #include "compiler/stdlib.h"
@@ -40,88 +39,93 @@ static char *read_file(const char *path) {
   return buffer;
 }
 
+typedef struct {
+  const char *path;
+  char *source;
+  Lexer lexer;
+  Parser parser;
+  ParseResult result;
+  int lexer_ready;
+  int parser_ready;
+} CompilationUnit;
+
+static int parse_unit(CompilationUnit *unit) {
+  unit->source = read_file(unit->path);
+  if (!unit->source) {
+    fprintf(stderr, "cannot read %s\n", unit->path);
+    return 1;
+  }
+
+  lexer_init(&unit->lexer, unit->source, unit->path);
+  unit->lexer_ready = 1;
+  lexer_tokenize(&unit->lexer);
+  if (lexer_had_error(&unit->lexer)) {
+    return 1;
+  }
+
+  parser_init(&unit->parser, lexer_get_tokens(&unit->lexer), unit->source, unit->path);
+  unit->parser_ready = 1;
+  unit->result = parser_parse(&unit->parser);
+  return unit->result.had_error ? 1 : 0;
+}
+
+static void cleanup_unit(CompilationUnit *unit) {
+  if (unit->parser_ready) {
+    parser_destroy(&unit->parser);
+  }
+  if (unit->lexer_ready) {
+    lexer_destroy(&unit->lexer);
+  }
+  free(unit->source);
+}
+
 int main(int argc, char **argv) {
-  int use_stdlib = 1;
-  const char *path = NULL;
-  if (argc == 2) {
-    path = argv[1];
-  } else if (argc == 3 && strcmp(argv[1], "--nostdlib") == 0) {
-    use_stdlib = 0;
-    path = argv[2];
-  } else {
-    fprintf(stderr, "usage: %s [--nostdlib] <input.c>\n", argc > 0 ? argv[0] : "crv");
+  if (argc <= 1) {
+    fprintf(stderr, "usage: %s <input.c>...\n", argc > 0 ? argv[0] : "crv");
     return 1;
   }
 
   int exit_code = 1;
-  char *stdlib_source = NULL;
-  Lexer stdlib_lexer;
-  Parser stdlib_parser;
-  int stdlib_lexer_ready = 0;
-  int stdlib_parser_ready = 0;
+  size_t input_count = (size_t) (argc - 1);
+  size_t unit_count = input_count;
+  CompilationUnit *units = calloc(unit_count, sizeof(CompilationUnit));
+  const AstModule **modules = calloc(unit_count, sizeof(AstModule *));
   AstModule merged_module = {0};
   int merged_module_ready = 0;
 
-  char *source = read_file(path);
-  if (!source) {
-    fprintf(stderr, "cannot read %s\n", path);
+  if (!units || !modules) {
+    fprintf(stderr, "out of memory\n");
+    free(units);
+    free(modules);
     return 1;
   }
 
-  diagnostic_init(path);
-
-  Lexer lexer;
-  lexer_init(&lexer, source, path);
-  lexer_tokenize(&lexer);
-  if (lexer_had_error(&lexer)) {
-    lexer_destroy(&lexer);
-    free(source);
-    return 1;
+  size_t unit_index = 0;
+  for (int i = 1; i < argc; i++) {
+    units[unit_index++].path = argv[i];
   }
 
-  Parser parser;
-  parser_init(&parser, lexer_get_tokens(&lexer), source, path);
-  ParseResult result = parser_parse(&parser);
-  if (result.had_error) {
+  const char *diagnostic_name = input_count == 1 ? argv[1] : "<multiple inputs>";
+  diagnostic_init(diagnostic_name);
+
+  for (size_t i = 0; i < unit_count; i++) {
+    if (parse_unit(&units[i]) != 0) {
+      goto cleanup;
+    }
+    modules[i] = units[i].result.module;
+  }
+
+  if (crv_merge_module_list(&merged_module, modules, unit_count) != 0) {
+    fprintf(stderr, "cannot merge modules\n");
+    goto cleanup;
+  }
+  merged_module_ready = 1;
+
+  if (semantic_analyze(&merged_module, diagnostic_name) != 0) {
     goto cleanup;
   }
 
-  const AstModule *module = result.module;
-  if (use_stdlib) {
-    const char *stdlib_path = crv_default_stdlib_path();
-    stdlib_source = read_file(stdlib_path);
-    if (!stdlib_source) {
-      fprintf(stderr, "cannot read stdlib %s\n", stdlib_path);
-      goto cleanup;
-    }
-
-    lexer_init(&stdlib_lexer, stdlib_source, stdlib_path);
-    stdlib_lexer_ready = 1;
-    lexer_tokenize(&stdlib_lexer);
-    if (lexer_had_error(&stdlib_lexer)) {
-      goto cleanup;
-    }
-
-    parser_init(&stdlib_parser, lexer_get_tokens(&stdlib_lexer), stdlib_source, stdlib_path);
-    stdlib_parser_ready = 1;
-    ParseResult stdlib_result = parser_parse(&stdlib_parser);
-    if (stdlib_result.had_error) {
-      goto cleanup;
-    }
-
-    if (crv_merge_modules(&merged_module, stdlib_result.module, result.module) != 0) {
-      fprintf(stderr, "cannot merge stdlib module\n");
-      goto cleanup;
-    }
-    merged_module_ready = 1;
-    module = &merged_module;
-  }
-
-  if (semantic_analyze(module, path) != 0) {
-    goto cleanup;
-  }
-
-  if (codegen_emit_module(stdout, module, path) != 0) {
+  if (codegen_emit_module(stdout, &merged_module, diagnostic_name) != 0) {
     goto cleanup;
   }
 
@@ -131,15 +135,10 @@ cleanup:
   if (merged_module_ready) {
     crv_free_merged_module(&merged_module);
   }
-  if (stdlib_parser_ready) {
-    parser_destroy(&stdlib_parser);
+  for (size_t i = 0; i < unit_count; i++) {
+    cleanup_unit(&units[i]);
   }
-  if (stdlib_lexer_ready) {
-    lexer_destroy(&stdlib_lexer);
-  }
-  free(stdlib_source);
-  parser_destroy(&parser);
-  lexer_destroy(&lexer);
-  free(source);
+  free(modules);
+  free(units);
   return exit_code;
 }
